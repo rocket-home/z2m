@@ -1,3 +1,3 @@
-### Координатор умного дома для работы с сервисом [rocket-home](https://rocket-home.ru/)
+### ZigBee координатор умного дома для работы с сервисом [rocket-home](https://rocket-home.ru/)
 
-[Документация](https://github.com/rocket-home/z2m-docker/wiki)
+[Инструкция по установке и настройке](https://github.com/rocket-home/z2m-docker/wiki)
