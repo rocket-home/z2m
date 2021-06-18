@@ -22,7 +22,7 @@ services:
     ports:
       - 4000:4000
     devices:
-      - "/dev/ttyUSB0:/dev/ttyUSB0"
+      - "/dev/ttyACM0:/dev/ttyACM0"
     volumes:
       - zigbee2mqtt:/app/data
       - ${PWD}/zigbee2mqtt.yaml:/app/configuration.yaml
