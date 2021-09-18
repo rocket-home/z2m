@@ -9,6 +9,7 @@ services:
     volumes:
       - mosquitto:/mosquitto/data
       - ${PWD}/mosquitto/conf.d:/mosquitto/conf.d
+      - ${PWD}/mosquitto/etc:/mosquitto/etc
     restart: unless-stopped
   nodered:
     image: nodered/node-red
