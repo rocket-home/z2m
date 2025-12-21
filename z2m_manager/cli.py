@@ -30,6 +30,7 @@ class Z2MCLI:
 
 📊 Статус и информация:
   status, s          - Показать статус контейнеров
+  ps, containers     - Показать статус контейнеров (алиас)
   config, c          - Показать текущую конфигурацию
   devices, d         - Показать доступные USB устройства
 
@@ -39,6 +40,7 @@ class Z2MCLI:
   restart            - Перезапустить все сервисы
   down               - Полная остановка (удалить контейнеры)
   logs [service]     - Показать логи (mqtt/zigbee2mqtt/nodered)
+  logs -f [service]  - Следить за логами (Ctrl+C чтобы выйти)
 
 ⚙️ Настройка:
   set-device <path>  - Установить Zigbee устройство
@@ -209,6 +211,27 @@ class Z2MCLI:
         logs = self.docker_manager.get_logs_snapshot(service=service, tail=50)
         print(logs)
 
+    def cmd_logs_follow(self, service=None, tail: int = 100):
+        """Следить за логами (follow)"""
+        print(f"\n📋 Логи -f {service or 'всех сервисов'} (Ctrl+C чтобы выйти):")
+        print("-" * 50)
+
+        process = self.docker_manager.get_logs(service=service, tail=tail, follow=True)
+        try:
+            while True:
+                line = process.stdout.readline()
+                if line == '' and process.poll() is not None:
+                    break
+                if line:
+                    print(line.rstrip())
+        except KeyboardInterrupt:
+            pass
+        finally:
+            try:
+                process.terminate()
+            except Exception:
+                pass
+
     def cmd_set_device(self, device):
         """Установить Zigbee устройство"""
         self.config.zigbee_device = device
@@ -305,7 +328,14 @@ class Z2MCLI:
                 elif command == 'down':
                     self.cmd_down()
                 elif command == 'logs':
-                    self.cmd_logs(args[0] if args else None)
+                    # поддержка: logs -f [service]
+                    if args and args[0] in ("-f", "--follow"):
+                        service = args[1] if len(args) > 1 else None
+                        self.cmd_logs_follow(service)
+                    else:
+                        self.cmd_logs(args[0] if args else None)
+                elif command in ['ps', 'containers']:
+                    self.cmd_status()
                 elif command == 'set-device':
                     if args:
                         self.cmd_set_device(args[0])
@@ -371,7 +401,10 @@ def print_usage():
   stop                Остановить сервисы
   restart             Перезапустить сервисы
   status              Показать статус контейнеров
+  ps                  Статус контейнеров (алиас)
+  containers          Статус контейнеров (алиас)
   logs [сервис]       Показать логи (mqtt/zigbee2mqtt/nodered)
+  logs -f [сервис]    Следить за логами (Ctrl+C чтобы выйти)
   
   config              Показать конфигурацию
   devices             Показать USB устройства
@@ -406,11 +439,16 @@ def run_quick_command(command: str, args: list) -> int:
         cli.cmd_restart()
     elif command in ('down',):
         cli.cmd_down()
-    elif command in ('status', 's'):
+    elif command in ('status', 's', 'ps', 'containers'):
         cli.cmd_status()
     elif command in ('logs', 'log'):
-        service = args[0] if args else None
-        cli.cmd_logs(service)
+        # поддержка: logs -f [service]
+        if args and args[0] in ("-f", "--follow"):
+            service = args[1] if len(args) > 1 else None
+            cli.cmd_logs_follow(service)
+        else:
+            service = args[0] if args else None
+            cli.cmd_logs(service)
     elif command in ('config', 'c'):
         cli.cmd_config()
     elif command in ('devices', 'd'):
@@ -428,7 +466,7 @@ def run_quick_command(command: str, args: list) -> int:
 # Команды, которые выполняются напрямую (без входа в интерактивный режим)
 QUICK_COMMANDS = {
     'start', 'stop', 'restart', 'down',
-    'status', 's',
+    'status', 's', 'ps', 'containers',
     'logs', 'log',
     'config', 'c',
     'devices', 'd',

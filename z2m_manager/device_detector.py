@@ -50,6 +50,24 @@ class DeviceDetector:
                             device_info['by_id'] = str(symlink)
                             devices.append(device_info)
 
+        # Если настроен udev-симлинк /dev/zigbee — добавляем его как предпочтительный alias
+        zigbee_link = Path("/dev/zigbee")
+        if zigbee_link.exists():
+            try:
+                real_path = str(zigbee_link.resolve())
+            except Exception:
+                real_path = str(zigbee_link)
+
+            existing = next((d for d in devices if d.get("path") == real_path), None)
+            if existing:
+                # Показываем /dev/zigbee в UI как предпочтительный вариант выбора
+                existing["by_id"] = str(zigbee_link)
+            else:
+                device_info = cls._get_device_info(real_path)
+                if device_info:
+                    device_info["by_id"] = str(zigbee_link)
+                    devices.append(device_info)
+
         return devices
 
     @classmethod
@@ -119,6 +137,10 @@ class DeviceDetector:
     @classmethod
     def get_default_device(cls) -> str:
         """Получение устройства по умолчанию"""
+        # Если есть стабильный симлинк — используем его
+        if Path("/dev/zigbee").exists():
+            return "/dev/zigbee"
+
         zigbee_devices = cls.detect_zigbee_adapters()
 
         if zigbee_devices:

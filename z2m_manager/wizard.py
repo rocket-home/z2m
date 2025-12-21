@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .device_detector import DeviceDetector
 from .config import Z2MConfig
+from .mqtt_test import test_mqtt_connection
 
 
 def colored(text: str, color: str) -> str:
@@ -80,8 +81,38 @@ def run_wizard() -> bool:
     
     config = Z2MConfig()
     
+    # === Шаг 0: Доступ к USB ===
+    print(colored("━━━ Шаг 1/4: Доступ к USB ━━━", "blue"))
+    print("\nЕсли Zigbee адаптер не виден в /dev — обычно нужно:")
+    print("- добавить пользователя в группу dialout")
+    print("- установить udev-правила (создают /dev/zigbee)")
+    print()
+
+    if ask_yes_no("Выполнить настройку доступа к USB сейчас?", default=False):
+        rules_src = Path(__file__).parent.parent / "99-zigbee.rules"
+        if not rules_src.exists():
+            print(colored(f"❌ Не найден файл правил: {rules_src}", "red"))
+        else:
+            print("\nБудут выполнены команды с sudo:")
+            print("  sudo usermod -aG dialout $USER")
+            print(f"  sudo cp {rules_src} /etc/udev/rules.d/99-zigbee.rules")
+            print("  sudo udevadm control --reload-rules")
+            print("  sudo udevadm trigger")
+            print()
+            try:
+                os.system("/bin/bash -lc 'sudo usermod -aG dialout \"$USER\"'")
+                os.system(f"/bin/bash -lc 'sudo cp {str(rules_src)!r} /etc/udev/rules.d/99-zigbee.rules'")
+                os.system("/bin/bash -lc 'sudo udevadm control --reload-rules && sudo udevadm trigger'")
+                os.system("/bin/bash -lc 'ls -la /dev/ttyUSB* /dev/ttyACM* /dev/zigbee 2>/dev/null || true'")
+                print("\nℹ️ Если dialout был добавлен только что — перелогиньтесь или выполните: newgrp dialout")
+            except Exception as e:
+                print(colored(f"❌ Ошибка выполнения команд: {e}", "red"))
+
+        input("\nНажмите Enter для продолжения...")
+
     # === Шаг 1: Выбор USB устройства ===
-    print(colored("━━━ Шаг 1/3: Zigbee USB адаптер ━━━", "blue"))
+    print()
+    print(colored("━━━ Шаг 2/4: Zigbee USB адаптер ━━━", "blue"))
     
     devices = DeviceDetector.detect_serial_devices()
     zigbee_devices = [d for d in devices if d.get('is_zigbee', False)]
@@ -124,7 +155,7 @@ def run_wizard() -> bool:
     
     # === Шаг 2: NodeRED ===
     print()
-    print(colored("━━━ Шаг 2/3: NodeRED ━━━", "blue"))
+    print(colored("━━━ Шаг 3/4: NodeRED ━━━", "blue"))
     print("\nNodeRED — визуальный редактор автоматизаций.")
     print("Полезен для сложных сценариев, но необязателен.")
     
@@ -137,13 +168,13 @@ def run_wizard() -> bool:
     
     # === Шаг 3: Облачный MQTT ===
     print()
-    print(colored("━━━ Шаг 3/3: Облачный MQTT ━━━", "blue"))
+    print(colored("━━━ Шаг 4/4: Облачный MQTT ━━━", "blue"))
     print("\nОблачный MQTT позволяет управлять устройствами удалённо.")
     print("Требуется регистрация на mq.rocket-home.ru")
     
-    config.cloud_mqtt_enabled = ask_yes_no("\nНастроить облачный MQTT?", default=False)
+    wants_cloud = ask_yes_no("\nНастроить облачный MQTT?", default=False)
     
-    if config.cloud_mqtt_enabled:
+    if wants_cloud:
         print("\nВведите данные для подключения:")
         
         host = input(f"Хост [{config.cloud_mqtt_host}]: ").strip()
@@ -157,9 +188,38 @@ def run_wizard() -> bool:
         password = input("Пароль: ").strip()
         if password:
             config.cloud_mqtt_password = password
-        
-        print("✅ Облачный MQTT настроен")
+
+        # Тестируем подключение (без публикаций)
+        print()
+        if ask_yes_no("Проверить подключение к облачному MQTT сейчас?", default=True):
+            print("⏳ Проверяю подключение...")
+            test = test_mqtt_connection(
+                host=config.cloud_mqtt_host,
+                username=config.cloud_mqtt_user,
+                password=config.cloud_mqtt_password,
+                port=1883,
+                timeout_sec=5,
+            )
+
+            if test.ok:
+                print(colored(f"✅ {test.message} ({test.host}:{test.port})", "green"))
+                # Предлагаем включить
+                config.cloud_mqtt_enabled = ask_yes_no("Включить облачный MQTT (бридж) сейчас?", default=True)
+                if config.cloud_mqtt_enabled:
+                    print("✅ Облачный MQTT будет включён")
+                else:
+                    print("ℹ️ Облачный MQTT сохранён, но выключен (можно включить позже)")
+            else:
+                print(colored(f"❌ {test.message} ({test.host}:{test.port})", "red"))
+                print("ℹ️ Креды сохранены, но Cloud MQTT оставлен выключенным.")
+                print("   Проверьте данные в профиле: https://rocket-home.ru/profile/mqtt")
+                config.cloud_mqtt_enabled = False
+        else:
+            # Без теста — выключено по умолчанию, чтобы не ломать запуск
+            config.cloud_mqtt_enabled = False
+            print("ℹ️ Креды сохранены. Cloud MQTT выключен (включите позже в настройках).")
     else:
+        config.cloud_mqtt_enabled = False
         print("ℹ️ Облачный MQTT выключен (можно настроить позже)")
     
     # === Сохранение ===

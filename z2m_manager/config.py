@@ -26,6 +26,8 @@ class Z2MConfig:
         self.bridge_conf_example = self.base_dir / "mosquitto" / "conf.d" / "bridge.conf.example"
         self.zigbee2mqtt_yaml = self.base_dir / "zigbee2mqtt.yaml"
         self.zigbee2mqtt_yaml_example = self.base_dir / "zigbee2mqtt.yaml.example"
+        self.zigbee2mqtt_base_yaml = self.base_dir / "zigbee2mqtt.base.yaml"
+        self.zigbee2mqtt_devices_yaml = self.base_dir / "zigbee2mqtt.devices.yaml"
         self._config: Dict[str, Any] = {}
         self._ensure_local_files()
         self.load_config()
@@ -95,11 +97,10 @@ class Z2MConfig:
         with open(self.bridge_conf, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        # Проверяем, закомментирована ли конфигурация
+        # ВАЖНО: CLOUD_MQTT_ENABLED — источник правды в .env.
+        # bridge.conf может быть не синхронизирован (например, из-за прав на файл),
+        # поэтому здесь НЕ переопределяем флаг включения.
         lines = content.strip().split('\n')
-        is_commented = all(line.strip().startswith('#') for line in lines if line.strip())
-
-        self._config["CLOUD_MQTT_ENABLED"] = not is_commented
 
         # Парсим значения (даже если закомментированы)
         for line in lines:
@@ -178,7 +179,7 @@ class Z2MConfig:
                 pass
 
     def _save_zigbee2mqtt_config(self) -> None:
-        """Обновление zigbee2mqtt.yaml (serial.port + frontend host/port)."""
+        """Обновление zigbee2mqtt.yaml (serial.port + frontend host/port) + вынесение devices в отдельный файл."""
         if not self.zigbee2mqtt_yaml.exists():
             return
 
@@ -203,6 +204,34 @@ class Z2MConfig:
             frontend.setdefault("port", self.DEFAULT_FRONTEND_PORT)
             frontend.setdefault("host", self.DEFAULT_FRONTEND_HOST)
             data["frontend"] = frontend
+
+            # 1) вытаскиваем devices из текущего файла (если есть)
+            devices = data.pop("devices", None)
+            if devices is None:
+                # если уже есть отдельный файл — оставляем его
+                if self.zigbee2mqtt_devices_yaml.exists():
+                    try:
+                        with open(self.zigbee2mqtt_devices_yaml, "r", encoding="utf-8") as df:
+                            devices = yaml.safe_load(df) or {}
+                    except Exception:
+                        devices = {}
+                else:
+                    devices = {}
+
+            # 2) пишем base и devices
+            try:
+                with open(self.zigbee2mqtt_base_yaml, "w", encoding="utf-8") as bf:
+                    yaml.safe_dump(data, bf, sort_keys=False, allow_unicode=True)
+                with open(self.zigbee2mqtt_devices_yaml, "w", encoding="utf-8") as df:
+                    yaml.safe_dump(devices, df, sort_keys=False, allow_unicode=True)
+            except Exception:
+                # если не смогли записать split файлы — просто вернём devices обратно
+                data["devices"] = devices
+            else:
+                # 3) собираем итоговый configuration.yaml для контейнера
+                merged = dict(data)
+                merged["devices"] = devices
+                data = merged
 
             with open(self.zigbee2mqtt_yaml, "w", encoding="utf-8") as f:
                 yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)

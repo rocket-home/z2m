@@ -11,6 +11,8 @@
 
 # Zigbee2MQTT runtime config (contains network keys / device settings after UI changes)
 zigbee2mqtt.yaml
+zigbee2mqtt.base.yaml
+zigbee2mqtt.devices.yaml
 
 # Mosquitto runtime secrets/config generated locally
 mosquitto/conf.d/bridge.conf

@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/.venv"
 UV_DIR="$SCRIPT_DIR/.uv"
 MARKER_FILE="$SCRIPT_DIR/.deps_installed"
+REQ_FILE="$SCRIPT_DIR/z2m_manager/requirements.txt"
 
 # Цвета
 RED='\033[0;31m'
@@ -80,10 +81,30 @@ install_uv() {
 
 # Настройка окружения
 setup_environment() {
+    local req_hash=""
+    if command -v sha256sum &>/dev/null; then
+        req_hash="$(sha256sum "$REQ_FILE" | awk '{print $1}')"
+    else
+        # fallback: mtime-based
+        req_hash="$(stat -c %Y "$REQ_FILE" 2>/dev/null || echo 0)"
+    fi
+
+    local marker_hash=""
+    if [ -f "$MARKER_FILE" ]; then
+        marker_hash="$(cat "$MARKER_FILE" 2>/dev/null || true)"
+    fi
+
     # Проверяем существующий venv
     if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
         # Проверяем, работает ли он
-        if "$VENV_DIR/bin/python" -c "import textual" 2>/dev/null; then
+        if "$VENV_DIR/bin/python" -c "import textual, yaml; import paho.mqtt.client" 2>/dev/null; then
+            # Если requirements изменились — обновим зависимости
+            if [ -n "$req_hash" ] && [ "$req_hash" != "$marker_hash" ]; then
+                log_info "Обнаружены изменения в requirements.txt, обновляю зависимости..."
+                source "$VENV_DIR/bin/activate"
+                pip install -q -r z2m_manager/requirements.txt || true
+                echo "$req_hash" > "$MARKER_FILE"
+            fi
             return 0
         fi
     fi
@@ -95,7 +116,7 @@ setup_environment() {
             source "$VENV_DIR/bin/activate"
             pip install -q -r z2m_manager/requirements.txt
             log_success "Окружение настроено (venv + pip)"
-            touch "$MARKER_FILE"
+            echo "$req_hash" > "$MARKER_FILE"
             return 0
         fi
     fi
@@ -120,7 +141,7 @@ setup_environment() {
     $UV_CMD pip install -p "$VENV_DIR/bin/python" -r z2m_manager/requirements.txt -q
 
     log_success "Окружение настроено"
-    touch "$MARKER_FILE"
+    echo "$req_hash" > "$MARKER_FILE"
 }
 
 # Проверка Docker
