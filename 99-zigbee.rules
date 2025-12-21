@@ -1,0 +1,28 @@
+# Zigbee USB adapters udev rules
+# Установка: sudo cp 99-zigbee.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# CC2531 / CH340 (многие клоны)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", MODE="0666", SYMLINK+="zigbee"
+
+# Sonoff ZBDongle-P (Silicon Labs CP210x)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", MODE="0666", SYMLINK+="zigbee"
+
+# Sonoff ZBDongle-E (CH9102)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", MODE="0666", SYMLINK+="zigbee"
+
+# ConBee / ConBee II
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1cf1", ATTRS{idProduct}=="0030", MODE="0666", SYMLINK+="zigbee"
+
+# Texas Instruments CC2531
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0451", ATTRS{idProduct}=="16a8", MODE="0666", SYMLINK+="zigbee"
+
+# FTDI (SLZB-06, Tube ZB и др.)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6015", MODE="0666", SYMLINK+="zigbee"
+
+# Silicon Labs EFR32
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="8a2a", MODE="0666", SYMLINK+="zigbee"
+
+# Espressif ESP32-based
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", MODE="0666", SYMLINK+="zigbee"
+
+

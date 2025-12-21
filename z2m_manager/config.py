@@ -1,0 +1,321 @@
+"""
+Модуль для работы с конфигурацией Z2M окружения
+"""
+import os
+import shutil
+from typing import Dict, Any, Optional
+from pathlib import Path
+
+try:
+    import yaml  # type: ignore
+except Exception:  # pragma: no cover
+    yaml = None
+
+
+class Z2MConfig:
+    """Класс для работы с конфигурацией Z2M"""
+
+    DEFAULT_CLOUD_HOST = "mq.rocket-home.ru"
+    DEFAULT_FRONTEND_HOST = "0.0.0.0"
+    DEFAULT_FRONTEND_PORT = 4000
+
+    def __init__(self, base_dir: Optional[Path] = None):
+        self.base_dir = base_dir or Path(__file__).parent.parent
+        self.env_file = self.base_dir / ".env"
+        self.bridge_conf = self.base_dir / "mosquitto" / "conf.d" / "bridge.conf"
+        self.bridge_conf_example = self.base_dir / "mosquitto" / "conf.d" / "bridge.conf.example"
+        self.zigbee2mqtt_yaml = self.base_dir / "zigbee2mqtt.yaml"
+        self.zigbee2mqtt_yaml_example = self.base_dir / "zigbee2mqtt.yaml.example"
+        self._config: Dict[str, Any] = {}
+        self._ensure_local_files()
+        self.load_config()
+
+    def _ensure_local_files(self) -> None:
+        """
+        Создаёт локальные конфиги, если они отсутствуют.
+        Эти файлы намеренно не должны храниться в git:
+        - zigbee2mqtt.yaml (после работы UI может содержать ключи/устройства)
+        - mosquitto/conf.d/bridge.conf (может содержать креды)
+        """
+        # zigbee2mqtt.yaml
+        if not self.zigbee2mqtt_yaml.exists():
+            if self.zigbee2mqtt_yaml_example.exists():
+                try:
+                    shutil.copy(self.zigbee2mqtt_yaml_example, self.zigbee2mqtt_yaml)
+                except OSError:
+                    pass
+
+        # bridge.conf
+        self.bridge_conf.parent.mkdir(parents=True, exist_ok=True)
+        if not self.bridge_conf.exists():
+            if self.bridge_conf_example.exists():
+                try:
+                    shutil.copy(self.bridge_conf_example, self.bridge_conf)
+                except OSError:
+                    pass
+
+    def load_config(self) -> None:
+        """Загрузка конфигурации из .env файла"""
+        self._config = {
+            "MQTT_USER": "",
+            "MQTT_PASSWORD": "",
+            "ZIGBEE_DEVICE": "/dev/ttyACM0",
+            "NODERED_ENABLED": False,
+            "CLOUD_MQTT_HOST": self.DEFAULT_CLOUD_HOST,
+            "CLOUD_MQTT_USER": "",
+            "CLOUD_MQTT_PASSWORD": "",
+            "CLOUD_MQTT_ENABLED": False,
+        }
+
+        if self.env_file.exists():
+            with open(self.env_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        key = key.strip()
+                        value = value.strip().strip('"').strip("'")
+
+                        if key in self._config:
+                            if key == "NODERED_ENABLED":
+                                self._config[key] = value.lower() in ('true', '1', 'yes')
+                            elif key == "CLOUD_MQTT_ENABLED":
+                                self._config[key] = value.lower() in ('true', '1', 'yes')
+                            else:
+                                self._config[key] = value
+
+        # Также загружаем cloud MQTT конфигурацию из bridge.conf если есть
+        self._load_bridge_config()
+
+    def _load_bridge_config(self) -> None:
+        """Загрузка конфигурации MQTT бриджа"""
+        if not self.bridge_conf.exists():
+            return
+
+        with open(self.bridge_conf, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Проверяем, закомментирована ли конфигурация
+        lines = content.strip().split('\n')
+        is_commented = all(line.strip().startswith('#') for line in lines if line.strip())
+
+        self._config["CLOUD_MQTT_ENABLED"] = not is_commented
+
+        # Парсим значения (даже если закомментированы)
+        for line in lines:
+            line = line.lstrip('#').strip()
+            if line.startswith('address '):
+                self._config["CLOUD_MQTT_HOST"] = line.split(' ', 1)[1].strip()
+            elif line.startswith('remote_username '):
+                value = line.split(' ', 1)[1].strip()
+                # Не загружаем placeholder значения
+                if not value.startswith('XXXX'):
+                    self._config["CLOUD_MQTT_USER"] = value
+            elif line.startswith('remote_password '):
+                value = line.split(' ', 1)[1].strip()
+                # Не загружаем placeholder значения
+                if not value.startswith('XXXX'):
+                    self._config["CLOUD_MQTT_PASSWORD"] = value
+
+    def save_config(self) -> None:
+        """Сохранение конфигурации в .env файл"""
+        env_lines = [
+            f"MQTT_USER={self._config['MQTT_USER']}",
+            f"MQTT_PASSWORD={self._config['MQTT_PASSWORD']}",
+            f"ZIGBEE_DEVICE={self._config['ZIGBEE_DEVICE']}",
+            f"NODERED_ENABLED={'true' if self._config['NODERED_ENABLED'] else 'false'}",
+            f"CLOUD_MQTT_HOST={self._config['CLOUD_MQTT_HOST']}",
+            f"CLOUD_MQTT_USER={self._config['CLOUD_MQTT_USER']}",
+            f"CLOUD_MQTT_PASSWORD={self._config['CLOUD_MQTT_PASSWORD']}",
+            f"CLOUD_MQTT_ENABLED={'true' if self._config['CLOUD_MQTT_ENABLED'] else 'false'}",
+        ]
+
+        with open(self.env_file, 'w', encoding='utf-8') as f:
+            f.write('\n'.join(env_lines) + '\n')
+
+        # Обновляем bridge.conf
+        self._save_bridge_config()
+        
+        # Обновляем zigbee2mqtt.yaml
+        self._save_zigbee2mqtt_config()
+
+    def _save_bridge_config(self) -> None:
+        """Сохранение конфигурации MQTT бриджа"""
+        self.bridge_conf.parent.mkdir(parents=True, exist_ok=True)
+
+        comment_prefix = "" if self._config["CLOUD_MQTT_ENABLED"] else "#"
+
+        # Используем placeholders если значения пустые
+        user = self._config['CLOUD_MQTT_USER'] or "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+        password = self._config['CLOUD_MQTT_PASSWORD'] or "XXXXXXXXXX"
+
+        content = f"""{comment_prefix}connection rocket
+{comment_prefix}address {self._config['CLOUD_MQTT_HOST']}
+{comment_prefix}topic # both 2
+{comment_prefix}remote_username {user}
+{comment_prefix}remote_password {password}
+{comment_prefix}notifications false
+"""
+
+        try:
+            with open(self.bridge_conf, 'w', encoding='utf-8') as f:
+                f.write(content)
+        except PermissionError:
+            # Если нет прав, пробуем через временный файл и замену
+            import tempfile
+            try:
+                # Создаём временный файл
+                with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', delete=False, dir=str(self.bridge_conf.parent)) as tmp:
+                    tmp.write(content)
+                    tmp_path = tmp.name
+                
+                # Пробуем скопировать
+                shutil.copy(tmp_path, str(self.bridge_conf))
+                os.unlink(tmp_path)
+            except (PermissionError, OSError):
+                # Если всё равно не получается, просто пропускаем сохранение bridge.conf
+                # Конфигурация в .env всё равно сохранится
+                pass
+
+    def _save_zigbee2mqtt_config(self) -> None:
+        """Обновление zigbee2mqtt.yaml (serial.port + frontend host/port)."""
+        if not self.zigbee2mqtt_yaml.exists():
+            return
+
+        try:
+            device = self._config["ZIGBEE_DEVICE"]
+
+            if yaml is None:
+                # Без PyYAML не трогаем файл (чтобы не повредить его).
+                return
+
+            with open(self.zigbee2mqtt_yaml, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+
+            if not isinstance(data, dict):
+                data = {}
+
+            serial = data.get("serial") if isinstance(data.get("serial"), dict) else {}
+            serial["port"] = device
+            data["serial"] = serial
+
+            frontend = data.get("frontend") if isinstance(data.get("frontend"), dict) else {}
+            frontend.setdefault("port", self.DEFAULT_FRONTEND_PORT)
+            frontend.setdefault("host", self.DEFAULT_FRONTEND_HOST)
+            data["frontend"] = frontend
+
+            with open(self.zigbee2mqtt_yaml, "w", encoding="utf-8") as f:
+                yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+        except (PermissionError, OSError) as e:
+            # Если нет прав, просто пропускаем
+            pass
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Получение значения конфигурации"""
+        return self._config.get(key, default)
+
+    def set(self, key: str, value: Any) -> None:
+        """Установка значения конфигурации"""
+        self._config[key] = value
+
+    @property
+    def mqtt_user(self) -> str:
+        return self._config.get("MQTT_USER", "")
+
+    @mqtt_user.setter
+    def mqtt_user(self, value: str) -> None:
+        self._config["MQTT_USER"] = value
+
+    @property
+    def mqtt_password(self) -> str:
+        return self._config.get("MQTT_PASSWORD", "")
+
+    @mqtt_password.setter
+    def mqtt_password(self, value: str) -> None:
+        self._config["MQTT_PASSWORD"] = value
+
+    @property
+    def zigbee_device(self) -> str:
+        return self._config.get("ZIGBEE_DEVICE", "/dev/ttyACM0")
+
+    @zigbee_device.setter
+    def zigbee_device(self, value: str) -> None:
+        self._config["ZIGBEE_DEVICE"] = value
+
+    @property
+    def nodered_enabled(self) -> bool:
+        return self._config.get("NODERED_ENABLED", False)
+
+    @nodered_enabled.setter
+    def nodered_enabled(self, value: bool) -> None:
+        self._config["NODERED_ENABLED"] = value
+
+    @property
+    def cloud_mqtt_enabled(self) -> bool:
+        return self._config.get("CLOUD_MQTT_ENABLED", False)
+
+    @cloud_mqtt_enabled.setter
+    def cloud_mqtt_enabled(self, value: bool) -> None:
+        self._config["CLOUD_MQTT_ENABLED"] = value
+
+    @property
+    def cloud_mqtt_host(self) -> str:
+        return self._config.get("CLOUD_MQTT_HOST", self.DEFAULT_CLOUD_HOST)
+
+    @cloud_mqtt_host.setter
+    def cloud_mqtt_host(self, value: str) -> None:
+        self._config["CLOUD_MQTT_HOST"] = value
+
+    @property
+    def cloud_mqtt_user(self) -> str:
+        return self._config.get("CLOUD_MQTT_USER", "")
+
+    @cloud_mqtt_user.setter
+    def cloud_mqtt_user(self, value: str) -> None:
+        self._config["CLOUD_MQTT_USER"] = value
+
+    @property
+    def cloud_mqtt_password(self) -> str:
+        return self._config.get("CLOUD_MQTT_PASSWORD", "")
+
+    @cloud_mqtt_password.setter
+    def cloud_mqtt_password(self, value: str) -> None:
+        self._config["CLOUD_MQTT_PASSWORD"] = value
+
+    def get_compose_profiles(self) -> list:
+        """Получение списка docker-compose профилей"""
+        profiles = []
+        if self.nodered_enabled:
+            profiles.append("nodered")
+        return profiles
+
+    def is_configured(self) -> bool:
+        """Проверка, настроена ли конфигурация"""
+        return bool(self.mqtt_password)
+
+    def get_status_summary(self) -> Dict[str, str]:
+        """Получение сводки по конфигурации"""
+        return {
+            "Zigbee Device": self.zigbee_device,
+            "Local MQTT User": self.mqtt_user or "(не задан)",
+            "Local MQTT Password": "***" if self.mqtt_password else "(не задан)",
+            "NodeRED": "✅ Включен" if self.nodered_enabled else "❌ Выключен",
+            "Cloud MQTT": "✅ Включен" if self.cloud_mqtt_enabled else "❌ Выключен",
+            "Cloud Host": self.cloud_mqtt_host if self.cloud_mqtt_enabled else "-",
+            "Cloud User": self.cloud_mqtt_user if self.cloud_mqtt_enabled else "-",
+        }
+
+    def is_device_configured(self) -> bool:
+        """Проверка, настроено ли устройство"""
+        if not self.zigbee_device:
+            return False
+        return Path(self.zigbee_device).exists()
+
+    def get_device_error(self) -> Optional[str]:
+        """Получение ошибки конфигурации устройства"""
+        if not self.zigbee_device:
+            return "Zigbee устройство не выбрано"
+        if not Path(self.zigbee_device).exists():
+            return f"Устройство {self.zigbee_device} не найдено"
+        return None
+
