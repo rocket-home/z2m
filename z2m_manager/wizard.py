@@ -8,6 +8,7 @@ from pathlib import Path
 from .device_detector import DeviceDetector
 from .config import Z2MConfig
 from .mqtt_test import test_mqtt_connection
+from .coordinator_detector import install_universal_silabs_flasher
 
 
 def colored(text: str, color: str) -> str:
@@ -151,6 +152,19 @@ def run_wizard() -> bool:
     else:
         print("\n❌ USB устройства не найдены!")
         print("   Подключите Zigbee адаптер и настройте его позже.")
+        input("\nНажмите Enter для продолжения...")
+
+    # Опционально: поставить tool для прошивки/информации EFR32 (Ember)
+    print()
+    print("ℹ️ Для определения прошивки Ember/EZSP можно установить universal-silabs-flasher.")
+    if ask_yes_no("Установить universal-silabs-flasher сейчас?", default=False):
+        inst = install_universal_silabs_flasher()
+        if inst.ok:
+            print(colored(f"✅ {inst.message}", "green"))
+        else:
+            print(colored(f"❌ {inst.message}", "red"))
+            if inst.output:
+                print(inst.output)
         input("\nНажмите Enter для продолжения...")
     
     # === Шаг 2: NodeRED ===

@@ -3,6 +3,7 @@
 """
 import os
 import shutil
+import re
 from typing import Dict, Any, Optional
 from pathlib import Path
 
@@ -16,6 +17,7 @@ class Z2MConfig:
     """Класс для работы с конфигурацией Z2M"""
 
     DEFAULT_CLOUD_HOST = "mq.rocket-home.ru"
+    DEFAULT_CLOUD_PROTOCOL = "mqttv311"  # mqttv31 | mqttv311 | mqttv50
     DEFAULT_FRONTEND_HOST = "0.0.0.0"
     DEFAULT_FRONTEND_PORT = 4000
 
@@ -29,6 +31,7 @@ class Z2MConfig:
         self.zigbee2mqtt_base_yaml = self.base_dir / "zigbee2mqtt.base.yaml"
         self.zigbee2mqtt_devices_yaml = self.base_dir / "zigbee2mqtt.devices.yaml"
         self._config: Dict[str, Any] = {}
+        self.bridge_conf_last_error: Optional[str] = None
         self._ensure_local_files()
         self.load_config()
 
@@ -67,6 +70,7 @@ class Z2MConfig:
             "CLOUD_MQTT_USER": "",
             "CLOUD_MQTT_PASSWORD": "",
             "CLOUD_MQTT_ENABLED": False,
+            "CLOUD_MQTT_PROTOCOL": self.DEFAULT_CLOUD_PROTOCOL,
         }
 
         if self.env_file.exists():
@@ -83,6 +87,11 @@ class Z2MConfig:
                                 self._config[key] = value.lower() in ('true', '1', 'yes')
                             elif key == "CLOUD_MQTT_ENABLED":
                                 self._config[key] = value.lower() in ('true', '1', 'yes')
+                            elif key == "CLOUD_MQTT_PROTOCOL":
+                                v = value.strip().lower()
+                                # допускаем mqttv31/mqttv311/mqttv50
+                                if v in ("mqttv31", "mqttv311", "mqttv50"):
+                                    self._config[key] = v
                             else:
                                 self._config[key] = value
 
@@ -120,27 +129,45 @@ class Z2MConfig:
 
     def save_config(self) -> None:
         """Сохранение конфигурации в .env файл"""
-        env_lines = [
-            f"MQTT_USER={self._config['MQTT_USER']}",
-            f"MQTT_PASSWORD={self._config['MQTT_PASSWORD']}",
-            f"ZIGBEE_DEVICE={self._config['ZIGBEE_DEVICE']}",
-            f"NODERED_ENABLED={'true' if self._config['NODERED_ENABLED'] else 'false'}",
-            f"CLOUD_MQTT_HOST={self._config['CLOUD_MQTT_HOST']}",
-            f"CLOUD_MQTT_USER={self._config['CLOUD_MQTT_USER']}",
-            f"CLOUD_MQTT_PASSWORD={self._config['CLOUD_MQTT_PASSWORD']}",
-            f"CLOUD_MQTT_ENABLED={'true' if self._config['CLOUD_MQTT_ENABLED'] else 'false'}",
+        self.bridge_conf_last_error = None
+        # Template merge: сохраняем неизвестные переменные и комментарии как есть,
+        # обновляем только управляемые ключи.
+        updates: Dict[str, str] = {
+            "MQTT_USER": str(self._config["MQTT_USER"]),
+            "MQTT_PASSWORD": str(self._config["MQTT_PASSWORD"]),
+            "ZIGBEE_DEVICE": str(self._config["ZIGBEE_DEVICE"]),
+            "NODERED_ENABLED": "true" if self._config["NODERED_ENABLED"] else "false",
+            "CLOUD_MQTT_HOST": str(self._config["CLOUD_MQTT_HOST"]),
+            "CLOUD_MQTT_USER": str(self._config["CLOUD_MQTT_USER"]),
+            "CLOUD_MQTT_PASSWORD": str(self._config["CLOUD_MQTT_PASSWORD"]),
+            "CLOUD_MQTT_ENABLED": "true" if self._config["CLOUD_MQTT_ENABLED"] else "false",
+            "CLOUD_MQTT_PROTOCOL": str(self._config.get("CLOUD_MQTT_PROTOCOL", self.DEFAULT_CLOUD_PROTOCOL)),
+        }
+        ordered_keys = [
+            "MQTT_USER",
+            "MQTT_PASSWORD",
+            "ZIGBEE_DEVICE",
+            "NODERED_ENABLED",
+            "CLOUD_MQTT_HOST",
+            "CLOUD_MQTT_USER",
+            "CLOUD_MQTT_PASSWORD",
+            "CLOUD_MQTT_ENABLED",
+            "CLOUD_MQTT_PROTOCOL",
         ]
 
-        with open(self.env_file, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(env_lines) + '\n')
+        merged_lines = self._merge_env_file(existing_path=self.env_file, updates=updates, ordered_keys=ordered_keys)
+        with open(self.env_file, "w", encoding="utf-8") as f:
+            f.write("\n".join(merged_lines).rstrip("\n") + "\n")
 
         # Обновляем bridge.conf
-        self._save_bridge_config()
+        ok = self._save_bridge_config()
+        if not ok and self.bridge_conf_last_error is None:
+            self.bridge_conf_last_error = "Не удалось обновить bridge.conf (проверьте права на файл)"
         
         # Обновляем zigbee2mqtt.yaml
         self._save_zigbee2mqtt_config()
 
-    def _save_bridge_config(self) -> None:
+    def _save_bridge_config(self) -> bool:
         """Сохранение конфигурации MQTT бриджа"""
         self.bridge_conf.parent.mkdir(parents=True, exist_ok=True)
 
@@ -149,9 +176,14 @@ class Z2MConfig:
         # Используем placeholders если значения пустые
         user = self._config['CLOUD_MQTT_USER'] or "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
         password = self._config['CLOUD_MQTT_PASSWORD'] or "XXXXXXXXXX"
+        proto = (self._config.get("CLOUD_MQTT_PROTOCOL") or self.DEFAULT_CLOUD_PROTOCOL).strip().lower()
+        if proto not in ("mqttv31", "mqttv311", "mqttv50"):
+            proto = self.DEFAULT_CLOUD_PROTOCOL
 
         content = f"""{comment_prefix}connection rocket
 {comment_prefix}address {self._config['CLOUD_MQTT_HOST']}
+{comment_prefix}bridge_protocol_version {proto}
+{comment_prefix}try_private false
 {comment_prefix}topic # both 2
 {comment_prefix}remote_username {user}
 {comment_prefix}remote_password {password}
@@ -161,6 +193,7 @@ class Z2MConfig:
         try:
             with open(self.bridge_conf, 'w', encoding='utf-8') as f:
                 f.write(content)
+            return True
         except PermissionError:
             # Если нет прав, пробуем через временный файл и замену
             import tempfile
@@ -173,10 +206,13 @@ class Z2MConfig:
                 # Пробуем скопировать
                 shutil.copy(tmp_path, str(self.bridge_conf))
                 os.unlink(tmp_path)
-            except (PermissionError, OSError):
-                # Если всё равно не получается, просто пропускаем сохранение bridge.conf
-                # Конфигурация в .env всё равно сохранится
-                pass
+                return True
+            except (PermissionError, OSError) as e:
+                self.bridge_conf_last_error = f"Нет прав на запись {self.bridge_conf} ({e})"
+                return False
+        except OSError as e:
+            self.bridge_conf_last_error = f"Ошибка записи {self.bridge_conf} ({e})"
+            return False
 
     def _save_zigbee2mqtt_config(self) -> None:
         """Обновление zigbee2mqtt.yaml (serial.port + frontend host/port) + вынесение devices в отдельный файл."""
@@ -251,6 +287,48 @@ class Z2MConfig:
     def mqtt_user(self) -> str:
         return self._config.get("MQTT_USER", "")
 
+    @staticmethod
+    def _merge_env_file(existing_path: Path, updates: Dict[str, str], ordered_keys: list[str]) -> list[str]:
+        """
+        Merge .env:
+        - сохраняем все строки как есть (комменты, пустые строки, неизвестные KEY=VALUE)
+        - обновляем значения для известных ключей (в первой встреченной строке KEY=...)
+        - если ключа нет — добавляем его в конец (в порядке ordered_keys)
+        """
+        key_re = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$")
+
+        if existing_path.exists():
+            raw = existing_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        else:
+            raw = []
+
+        lines = list(raw)
+        seen: set[str] = set()
+
+        # 1) обновляем существующие
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            m = key_re.match(line)
+            if not m:
+                continue
+            key = m.group(1)
+            if key in updates:
+                # обновляем только первое вхождение, остальные оставляем как есть
+                if key not in seen:
+                    lines[i] = f"{key}={updates[key]}"
+                    seen.add(key)
+
+        # 2) добавляем отсутствующие ключи в конец, сохраняя порядок
+        to_add = [k for k in ordered_keys if k in updates and k not in seen]
+        if to_add:
+            if lines and lines[-1].strip() != "":
+                lines.append("")
+            lines.extend([f"{k}={updates[k]}" for k in to_add])
+
+        return lines
+
     @mqtt_user.setter
     def mqtt_user(self, value: str) -> None:
         self._config["MQTT_USER"] = value
@@ -310,6 +388,15 @@ class Z2MConfig:
     @cloud_mqtt_password.setter
     def cloud_mqtt_password(self, value: str) -> None:
         self._config["CLOUD_MQTT_PASSWORD"] = value
+
+    @property
+    def cloud_mqtt_protocol(self) -> str:
+        return self._config.get("CLOUD_MQTT_PROTOCOL", self.DEFAULT_CLOUD_PROTOCOL)
+
+    @cloud_mqtt_protocol.setter
+    def cloud_mqtt_protocol(self, value: str) -> None:
+        v = (value or "").strip().lower()
+        self._config["CLOUD_MQTT_PROTOCOL"] = v if v in ("mqttv31", "mqttv311", "mqttv50") else self.DEFAULT_CLOUD_PROTOCOL
 
     def get_compose_profiles(self) -> list:
         """Получение списка docker-compose профилей"""

@@ -6,7 +6,7 @@ services:
       - 9001:9001
     volumes:
       - mosquitto:/mosquitto/data
-      - ${PWD}/mosquitto/conf.d:/mosquitto/conf.d
+      - ${PWD}/mosquitto/conf.d:/mosquitto/conf.d:ro
       - mosquitto_etc:/mosquitto/etc
     environment:
       - MQTT_USER=${MQTT_USER:-user}

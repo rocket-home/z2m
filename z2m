@@ -97,12 +97,24 @@ setup_environment() {
     # Проверяем существующий venv
     if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
         # Проверяем, работает ли он
-        if "$VENV_DIR/bin/python" -c "import textual, yaml; import paho.mqtt.client" 2>/dev/null; then
+        if "$VENV_DIR/bin/python" -c "import textual, yaml; import paho.mqtt.client; import serial" 2>/dev/null; then
             # Если requirements изменились — обновим зависимости
             if [ -n "$req_hash" ] && [ "$req_hash" != "$marker_hash" ]; then
                 log_info "Обнаружены изменения в requirements.txt, обновляю зависимости..."
                 source "$VENV_DIR/bin/activate"
-                pip install -q -r z2m_manager/requirements.txt || true
+                if command -v pip &>/dev/null; then
+                    pip install -q -r z2m_manager/requirements.txt || true
+                else
+                    # pip может отсутствовать (venv создан через uv) — используем uv
+                    if command -v uv &>/dev/null; then
+                        UV_CMD="uv"
+                    elif [ -f "$UV_DIR/bin/uv" ]; then
+                        UV_CMD="$UV_DIR/bin/uv"
+                    else
+                        install_uv
+                    fi
+                    $UV_CMD pip install -p "$VENV_DIR/bin/python" -r z2m_manager/requirements.txt -q || true
+                fi
                 echo "$req_hash" > "$MARKER_FILE"
             fi
             return 0
@@ -160,6 +172,10 @@ check_docker() {
 run_app() {
     cd "$SCRIPT_DIR"
     source "$VENV_DIR/bin/activate"
+    # чтобы из приложения (TUI/CLI) были доступны утилиты, установленные локально в проект (.uv/bin/uv)
+    if [ -d "$UV_DIR/bin" ]; then
+        export PATH="$UV_DIR/bin:$PATH"
+    fi
     exec python z2m.py "$@"
 }
 

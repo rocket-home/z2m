@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-# Удаляем listener.conf если есть, чтобы избежать конфликтов
-rm -f /mosquitto/conf.d/listener.conf
+# Удаляем listener.conf если есть, чтобы избежать конфликтов (conf.d может быть read-only)
+rm -f /mosquitto/conf.d/listener.conf 2>/dev/null || true
 
 # Проверяем, заданы ли переменные окружения для пользователя
 if [ -n "$MQTT_USER" ] && [ -n "$MQTT_PASSWORD" ]; then
@@ -18,12 +18,20 @@ if [ -n "$MQTT_USER" ] && [ -n "$MQTT_PASSWORD" ]; then
     fi
 
     # Приводим права в порядок (без world-readable)
-    chown mosquitto:mosquitto /mosquitto/etc/password 2>/dev/null || true
+    # Важно: upstream ожидает owner=root (иначе future versions могут отказать).
+    chown root:root /mosquitto/etc/password 2>/dev/null || true
     chmod 600 /mosquitto/etc/password 2>/dev/null || true
 else
     echo "MQTT_USER and MQTT_PASSWORD not set, skipping user creation"
 fi
 
-# Запускаем оригинальный entrypoint mosquitto
-exec /docker-entrypoint.sh "$@"
+# НЕ вызываем /docker-entrypoint.sh (он делает chown -R /mosquitto и ломается на read-only /mosquitto/conf.d).
+# Вместо этого аккуратно выставляем права только на writable директории.
+if [ "$(id -u)" = "0" ]; then
+    for d in /mosquitto/data /mosquitto/etc /mosquitto/log; do
+        [ -d "$d" ] && chown -R mosquitto:mosquitto "$d" 2>/dev/null || true
+    done
+fi
+
+exec "$@"
 

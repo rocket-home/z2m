@@ -2,12 +2,19 @@
 Консольный интерфейс для управления Z2M окружением
 """
 import sys
+from typing import Optional
 
 from .config import Z2MConfig
 from .docker_manager import DockerManager
 from .device_detector import DeviceDetector
 from .doctor import run_doctor
 from .wizard import maybe_run_wizard, run_wizard
+from .coordinator_detector import (
+    guess_driver_from_device_info,
+    pick_best_device,
+    probe_coordinator,
+    install_universal_silabs_flasher,
+)
 
 
 class Z2MCLI:
@@ -33,6 +40,8 @@ class Z2MCLI:
   ps, containers     - Показать статус контейнеров (алиас)
   config, c          - Показать текущую конфигурацию
   devices, d         - Показать доступные USB устройства
+  coordinator        - Определить тип координатора (ember/zstack) по USB
+  coordinator --probe [dev] - Активный probe порта (zstack точно; silabs через tool)
 
 🐳 Управление контейнерами:
   start              - Запустить все сервисы
@@ -137,6 +146,90 @@ class Z2MCLI:
             print(f"  ⚠️ {device_error}")
         else:
             print(f"  Текущий выбор: {current}")
+
+    def cmd_coordinator(self, args: Optional[list] = None):
+        """Определить драйвер координатора (ember/zstack) по USB эвристике."""
+        args = args or []
+        do_probe = False
+        do_install_usf = False
+        device_override: Optional[str] = None
+        for a in args:
+            if a in ("--probe", "-p"):
+                do_probe = True
+            elif a in ("--install-usf", "--install-flasher"):
+                do_install_usf = True
+            elif not a.startswith("-"):
+                device_override = a
+
+        print("\n🧩 Координатор (оценка драйвера):")
+        print("-" * 50)
+
+        devices = DeviceDetector.detect_serial_devices()
+        device = None
+        if device_override:
+            # Попробуем найти device_info по реальному пути
+            for d in devices:
+                if d.get("by_id") == device_override or d.get("path") == device_override:
+                    device = d
+                    break
+            if device is None:
+                device = {"path": device_override, "by_id": device_override, "description": "Manual device"}
+        else:
+            device = pick_best_device(devices)
+        if not device:
+            print("  (устройства не найдены)")
+            return
+
+        device_path = device_override or (device.get("by_id") or device.get("path"))
+
+        if do_install_usf:
+            print("  Установка: universal-silabs-flasher")
+            inst = install_universal_silabs_flasher()
+            print(f"  Результат: {'✅' if inst.ok else '❌'} {inst.message}")
+            if inst.output:
+                print("  ---")
+                print(inst.output)
+                print("  ---")
+            if not do_probe:
+                return
+
+        if do_probe:
+            print("  Режим: probe")
+            res = probe_coordinator(device, device_path)
+            print(f"  Устройство: {device_path}")
+            print(f"  Результат: {'✅' if res.ok else '❌'} {res.driver}")
+            print(f"  Сообщение: {res.message}")
+            if res.details:
+                # печатаем кратко
+                # zstack: details["version"] dict, ember: details["firmware"]
+                ver = res.details.get("version") if isinstance(res.details, dict) else None
+                fw = res.details.get("firmware") if isinstance(res.details, dict) else None
+                if isinstance(ver, dict):
+                    rev = ver.get("revision")
+                    maj = ver.get("majorrel")
+                    minr = ver.get("minorrel")
+                    maint = ver.get("maintrel")
+                    print(f"  firmware(znp): rev={rev} ver={maj}.{minr}.{maint}")
+                if fw:
+                    print(f"  firmware(ember): {fw}")
+                for k, v in res.details.items():
+                    if k in ("version", "output", "firmware"):
+                        continue
+                    print(f"  {k}: {v}")
+            return
+
+        guess = guess_driver_from_device_info(device)
+        shown_path = device.get("by_id") or device.get("path")
+        usb_id = device.get("usb_id", "-")
+        desc = device.get("description", "Unknown")
+
+        print(f"  Устройство: {shown_path}")
+        print(f"  USB ID: {usb_id}")
+        print(f"  Описание: {desc}")
+        print()
+        print(f"  Драйвер: {guess.driver}")
+        print(f"  Уверенность: {guess.confidence}")
+        print(f"  Причина: {guess.reason}")
 
     def cmd_start(self):
         """Запустить сервисы"""
@@ -319,6 +412,8 @@ class Z2MCLI:
                     self.cmd_config()
                 elif command in ['devices', 'd']:
                     self.cmd_devices()
+                elif command in ['coordinator', 'coord']:
+                    self.cmd_coordinator(args)
                 elif command == 'start':
                     self.cmd_start()
                 elif command == 'stop':
@@ -409,6 +504,8 @@ def print_usage():
   config              Показать конфигурацию
   devices             Показать USB устройства
   doctor              Диагностика системы
+  coordinator         Определить координатор (ember/zstack) по USB
+  coordinator --probe [dev] Активный probe (zstack через serial, silabs через tool)
   
   help, -h, --help    Показать эту справку
 
@@ -453,6 +550,8 @@ def run_quick_command(command: str, args: list) -> int:
         cli.cmd_config()
     elif command in ('devices', 'd'):
         cli.cmd_devices()
+    elif command in ('coordinator', 'coord'):
+        cli.cmd_coordinator(args)
     elif command in ('help', '-h', '--help'):
         print_usage()
     else:
@@ -471,6 +570,7 @@ QUICK_COMMANDS = {
     'config', 'c',
     'devices', 'd',
     'doctor',
+    'coordinator', 'coord',
     'help', '-h', '--help',
 }
 
