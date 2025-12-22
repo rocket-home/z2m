@@ -23,6 +23,7 @@ from .config import Z2MConfig
 from .docker_manager import DockerManager
 from .device_detector import DeviceDetector
 from .coordinator_detector import guess_driver_from_device_info, probe_coordinator, install_universal_silabs_flasher
+from .mqtt_test import set_z2m_permit_join
 
 
 class ArrowNavScreen(Screen):
@@ -1039,6 +1040,7 @@ class ControlScreen(Screen):
                 yield ListItem(Label("🛑 Остановить"), id="menu_stop")
                 yield ListItem(Label("🔄 Перезапустить"), id="menu_restart")
                 yield ListItem(Label("📋 Логи"), id="menu_logs")
+                yield ListItem(Label("🔓 permit_join: ВЫКЛ"), id="menu_permit_join")
                 yield ListItem(Label("🗑️ Удалить контейнеры"), id="menu_down")
                 yield ListItem(Label("↩ Назад"), id="menu_back")
         yield Footer()
@@ -1046,6 +1048,19 @@ class ControlScreen(Screen):
     def on_mount(self) -> None:
         self.query_one("#control_menu", ListView).focus()
         self.query_one("#control_menu", ListView).index = 0
+        self._update_permit_join_label()
+
+    def _update_permit_join_label(self) -> None:
+        try:
+            item = self.query_one("#menu_permit_join", ListItem)
+            label = item.query_one(Label)
+        except Exception:
+            return
+        cur = self.app.config.get_z2m_permit_join()
+        if cur is None:
+            label.update("🔓 permit_join (yaml): ?")
+        else:
+            label.update(f"🔓 permit_join (yaml): {'ВКЛ' if cur else 'ВЫКЛ'}")
 
     @on(ListView.Selected)
     async def on_selected(self, event: ListView.Selected) -> None:
@@ -1074,6 +1089,19 @@ class ControlScreen(Screen):
             await self.app.run_docker_operation("🔄 Перезапуск сервисов", self.app._do_restart)
         elif item_id == "menu_logs":
             self.app.push_screen(LogsScreen())
+        elif item_id == "menu_permit_join":
+            cur = self.app.config.get_z2m_permit_join()
+            # если неизвестно — считаем, что сейчас выключено
+            enabled = not bool(cur)
+            ok = await asyncio.to_thread(self.app.config.set_z2m_permit_join, enabled)
+            if ok:
+                self.app.notify(f"✅ permit_join (yaml): {'ВКЛ' if enabled else 'ВЫКЛ'}")
+                # чтобы изменения применились — предложим restart если контейнеры запущены
+                self.app.refresh_status()
+                self.app.prompt_restart_if_running()
+            else:
+                self.app.notify("❌ Не удалось обновить zigbee2mqtt.yaml (проверьте права)", severity="error")
+            self._update_permit_join_label()
         elif item_id == "menu_down":
             self.app.push_screen(ConfirmDownScreen())
 

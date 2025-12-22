@@ -15,6 +15,7 @@ from .coordinator_detector import (
     probe_coordinator,
     install_universal_silabs_flasher,
 )
+from .mqtt_test import set_z2m_permit_join as set_z2m_permit_join_runtime
 
 
 class Z2MCLI:
@@ -42,6 +43,7 @@ class Z2MCLI:
   devices, d         - Показать доступные USB устройства
   coordinator        - Определить тип координатора (ember/zstack) по USB
   coordinator --probe [dev] - Активный probe порта (zstack точно; silabs через tool)
+  permit-join        - Разрешить/запретить подключение новых устройств (permit_join) в zigbee2mqtt.yaml
 
 🐳 Управление контейнерами:
   start              - Запустить все сервисы
@@ -138,6 +140,58 @@ class Z2MCLI:
             print(f"      {desc}")
             if by_id:
                 print(f"      by-id: {by_id}")
+
+    def cmd_permit_join(self, args: list[str]) -> None:
+        """
+        Управление permit_join в zigbee2mqtt.yaml (персистентно).
+        Опционально: --mqtt для runtime-команды через MQTT (не меняет yaml).
+        Примеры:
+          permit-join on
+          permit-join off
+          permit-join on --mqtt 60
+        """
+        if not args:
+            cur = self.config.get_z2m_permit_join()
+            cur_s = "неизвестно" if cur is None else ("ВКЛ" if cur else "ВЫКЛ")
+            print(f"permit_join: {cur_s}")
+            print("Использование: permit-join on|off [--mqtt [сек]]")
+            return
+
+        mqtt_mode = "--mqtt" in args or "--runtime" in args
+        args_wo_flags = [a for a in args if a not in ("--mqtt", "--runtime")]
+
+        if not args_wo_flags:
+            print("❌ Укажите on|off")
+            return
+
+        action = args_wo_flags[0].strip().lower()
+        if action in ("on", "enable", "1", "true", "yes"):
+            enabled = True
+        elif action in ("off", "disable", "0", "false", "no"):
+            enabled = False
+        else:
+            print("❌ Неверное действие. Используйте: on|off [--mqtt [сек]]")
+            return
+
+        if mqtt_mode:
+            duration = 60
+            if enabled and len(args_wo_flags) > 1 and args_wo_flags[1].strip().isdigit():
+                duration = int(args_wo_flags[1].strip())
+            res = set_z2m_permit_join_runtime(self.config, enabled=enabled, duration_sec=duration)
+            if res.ok:
+                if enabled:
+                    print(f"✅ permit_join runtime включен на {duration} сек (topic: {res.topic})")
+                else:
+                    print(f"✅ permit_join runtime выключен (topic: {res.topic})")
+            else:
+                print(f"❌ permit_join runtime: {res.message}")
+            return
+
+        ok = self.config.set_z2m_permit_join(enabled)
+        if ok:
+            print(f"✅ permit_join в zigbee2mqtt.yaml: {'ВКЛ' if enabled else 'ВЫКЛ'}")
+        else:
+            print("❌ Не удалось обновить zigbee2mqtt.yaml (проверьте файл и права)")
 
         print()
         current = self.config.zigbee_device
@@ -414,6 +468,8 @@ class Z2MCLI:
                     self.cmd_devices()
                 elif command in ['coordinator', 'coord']:
                     self.cmd_coordinator(args)
+                elif command in ['permit-join', 'permit_join', 'permitjoin']:
+                    self.cmd_permit_join(args)
                 elif command == 'start':
                     self.cmd_start()
                 elif command == 'stop':
@@ -506,6 +562,8 @@ def print_usage():
   doctor              Диагностика системы
   coordinator         Определить координатор (ember/zstack) по USB
   coordinator --probe [dev] Активный probe (zstack через serial, silabs через tool)
+  permit-join on|off          permit_join в zigbee2mqtt.yaml
+  permit-join on|off --mqtt [сек]  runtime permit_join через MQTT (по умолчанию 60 сек)
   
   help, -h, --help    Показать эту справку
 
@@ -552,6 +610,8 @@ def run_quick_command(command: str, args: list) -> int:
         cli.cmd_devices()
     elif command in ('coordinator', 'coord'):
         cli.cmd_coordinator(args)
+    elif command in ('permit-join', 'permit_join', 'permitjoin'):
+        cli.cmd_permit_join(args)
     elif command in ('help', '-h', '--help'):
         print_usage()
     else:
@@ -571,6 +631,7 @@ QUICK_COMMANDS = {
     'devices', 'd',
     'doctor',
     'coordinator', 'coord',
+    'permit-join', 'permit_join', 'permitjoin',
     'help', '-h', '--help',
 }
 
