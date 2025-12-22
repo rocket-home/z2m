@@ -1,0 +1,19 @@
+# Minimal Zigbee2MQTT config template (copy to zigbee2mqtt.yaml for local use)
+homeassistant: false
+
+permit_join: true
+
+mqtt:
+  base_topic: zigbee2mqtt
+  server: "mqtt://mqtt:1883"
+
+serial:
+  port: /dev/ttyUSB0
+
+# Frontend (web interface)
+frontend:
+  port: 4000
+  host: 0.0.0.0
+
+
+

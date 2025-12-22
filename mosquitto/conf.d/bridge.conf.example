@@ -1,6 +1,11 @@
 #connection rocket
 #address mq.rocket-home.ru
+#bridge_protocol_version mqttv311
+#try_private false
 #topic # both 2
 #remote_username XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
 #remote_password XXXXXXXXXX
 #notifications false
+
+
+
