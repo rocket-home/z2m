@@ -74,6 +74,8 @@ cd z2m
 # Диагностика
 ./z2m doctor        # Проверка системы
 ./z2m devices       # Список USB устройств
+./z2m coordinator   # Определить тип координатора (ember/zstack) по USB
+./z2m permit-join on|off  # Разрешить/запретить join (permit_join) в zigbee2mqtt.yaml
 ./z2m config        # Текущая конфигурация
 ```
 
@@ -162,6 +164,8 @@ z2m/
 status, s          - Показать статус контейнеров
 config, c          - Показать конфигурацию
 devices, d         - Показать USB устройства
+coordinator, coord - Определить тип координатора (ember/zstack) по USB
+permit-join        - Переключить permit_join в zigbee2mqtt.yaml (on/off)
 
 # Управление
 start              - Запустить сервисы
@@ -205,6 +209,7 @@ TUI предоставляет интерактивный интерфейс с:
 - `3` - Логи NodeRED
 - `0` - Все логи
 - `r` - Обновить
+- `f` - Переключить режим snapshot/follow (по умолчанию follow)
 
 
 ## Сборка .pyz архива

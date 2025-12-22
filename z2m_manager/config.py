@@ -275,6 +275,70 @@ class Z2MConfig:
             # Если нет прав, просто пропускаем
             pass
 
+    def get_z2m_base_topic(self) -> str:
+        """
+        Возвращает mqtt.base_topic из zigbee2mqtt.yaml.
+        Нужен для отправки bridge/request команд (permit_join и др.).
+        """
+        default = "zigbee2mqtt"
+        if yaml is None:
+            return default
+        try:
+            if not self.zigbee2mqtt_yaml.exists():
+                return default
+            with open(self.zigbee2mqtt_yaml, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            if not isinstance(data, dict):
+                return default
+            mqtt = data.get("mqtt")
+            if not isinstance(mqtt, dict):
+                return default
+            base = mqtt.get("base_topic")
+            if isinstance(base, str) and base.strip():
+                return base.strip()
+        except Exception:
+            return default
+        return default
+
+    def get_z2m_permit_join(self) -> Optional[bool]:
+        """Читает permit_join из zigbee2mqtt.yaml (None если не удалось прочитать)."""
+        if yaml is None:
+            return None
+        try:
+            if not self.zigbee2mqtt_yaml.exists():
+                return None
+            with open(self.zigbee2mqtt_yaml, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            if not isinstance(data, dict):
+                return None
+            value = data.get("permit_join")
+            if isinstance(value, bool):
+                return value
+            # иногда встречается 0/1
+            if isinstance(value, int) and value in (0, 1):
+                return bool(value)
+            return None
+        except Exception:
+            return None
+
+    def set_z2m_permit_join(self, enabled: bool) -> bool:
+        """Обновляет permit_join в zigbee2mqtt.yaml. Возвращает True/False по результату записи."""
+        if yaml is None:
+            return False
+        if not self.zigbee2mqtt_yaml.exists():
+            return False
+        try:
+            with open(self.zigbee2mqtt_yaml, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            if not isinstance(data, dict):
+                data = {}
+            data["permit_join"] = bool(enabled)
+            with open(self.zigbee2mqtt_yaml, "w", encoding="utf-8") as f:
+                yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+            return True
+        except Exception:
+            return False
+
     def get(self, key: str, default: Any = None) -> Any:
         """Получение значения конфигурации"""
         return self._config.get(key, default)
