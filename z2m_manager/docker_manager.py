@@ -185,6 +185,13 @@ class DockerManager:
 
         return self._run_compose(["down"], log_callback)
 
+    def down_services_with_volumes(self, log_callback: Optional[Callable[[str], None]] = None) -> bool:
+        """Полная остановка и удаление контейнеров вместе с volume (-v)."""
+        if log_callback:
+            log_callback("💀 Запуск docker compose down -v (удаление volume)...")
+
+        return self._run_compose(["down", "-v"], log_callback)
+
     def get_logs(
         self,
         service: Optional[str] = None,

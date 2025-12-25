@@ -1,0 +1,22 @@
+{# AUTO-GENERATED FILE — DO NOT EDIT MANUALLY #}
+# =========================================
+# AUTO-GENERATED FILE — DO NOT EDIT MANUALLY
+# =========================================
+# This `bridge.conf` was generated from `.env` using:
+# - template: `z2m_manager/templates/bridge.conf.j2`
+# - command: `./z2m gen-configs --force`
+#
+# To change settings:
+# - edit `.env` (CLOUD_MQTT_*), then re-generate the config
+# - for manual reference see `mosquitto/conf.d/bridge.conf.example`
+{% set c = "" if CLOUD_MQTT_ENABLED else "#" %}
+{{ c }}connection rocket
+{{ c }}address {{ CLOUD_MQTT_HOST | default("mq.rocket-home.ru") }}
+{{ c }}bridge_protocol_version {{ CLOUD_MQTT_PROTOCOL | default("mqttv311") }}
+{{ c }}try_private false
+{{ c }}topic # both 2
+{{ c }}remote_username {{ CLOUD_MQTT_USER or "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" }}
+{{ c }}remote_password {{ CLOUD_MQTT_PASSWORD or "XXXXXXXXXX" }}
+{{ c }}notifications false
+
+

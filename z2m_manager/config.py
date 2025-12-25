@@ -4,6 +4,7 @@
 import os
 import shutil
 import re
+from datetime import datetime
 from typing import Dict, Any, Optional
 from pathlib import Path
 
@@ -11,6 +12,12 @@ try:
     import yaml  # type: ignore
 except Exception:  # pragma: no cover
     yaml = None
+
+try:
+    from jinja2 import Environment, Undefined  # type: ignore
+except Exception:  # pragma: no cover
+    Environment = None  # type: ignore
+    Undefined = None  # type: ignore
 
 
 class Z2MConfig:
@@ -30,10 +37,14 @@ class Z2MConfig:
         self.zigbee2mqtt_yaml_example = self.base_dir / "zigbee2mqtt.yaml.example"
         self.zigbee2mqtt_base_yaml = self.base_dir / "zigbee2mqtt.base.yaml"
         self.zigbee2mqtt_devices_yaml = self.base_dir / "zigbee2mqtt.devices.yaml"
+        self.templates_dir = self.base_dir / "z2m_manager" / "templates"
+        self.zigbee2mqtt_yaml_template = self.templates_dir / "zigbee2mqtt.yaml.j2"
+        self.bridge_conf_template = self.templates_dir / "bridge.conf.j2"
         self._config: Dict[str, Any] = {}
+        self._env_all: Dict[str, str] = {}
         self.bridge_conf_last_error: Optional[str] = None
-        self._ensure_local_files()
         self.load_config()
+        self._ensure_local_files()
 
     def _ensure_local_files(self) -> None:
         """
@@ -42,22 +53,225 @@ class Z2MConfig:
         - zigbee2mqtt.yaml (после работы UI может содержать ключи/устройства)
         - mosquitto/conf.d/bridge.conf (может содержать креды)
         """
-        # zigbee2mqtt.yaml
-        if not self.zigbee2mqtt_yaml.exists():
-            if self.zigbee2mqtt_yaml_example.exists():
-                try:
-                    shutil.copy(self.zigbee2mqtt_yaml_example, self.zigbee2mqtt_yaml)
-                except OSError:
-                    pass
+        # На старте создаём локальные файлы (если отсутствуют).
+        # Используем только шаблоны (Jinja2). `.example` остаются только для ручной настройки.
+        try:
+            self.generate_local_configs(force=False, backup=False, zigbee2mqtt_yaml=True, bridge_conf=True, split_yaml=False)
+        except Exception:
+            # Ничего критичного: просто не создадим файлы автоматически.
+            return
 
-        # bridge.conf
-        self.bridge_conf.parent.mkdir(parents=True, exist_ok=True)
-        if not self.bridge_conf.exists():
-            if self.bridge_conf_example.exists():
+    def _read_env_file_all(self) -> Dict[str, str]:
+        """Читает .env и возвращает все KEY=VALUE (включая неизвестные)."""
+        env: Dict[str, str] = {}
+        try:
+            if not self.env_file.exists():
+                return env
+            with open(self.env_file, "r", encoding="utf-8") as f:
+                for raw in f:
+                    line = raw.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, value = line.split("=", 1)
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    if key:
+                        env[key] = value
+        except Exception:
+            return env
+        return env
+
+    def _get_template_context(self) -> Dict[str, Any]:
+        """Контекст для шаблонов: значения из .env + нормализованные значения менеджера."""
+        # 1) все ключи из .env (включая пользовательские)
+        env_all = self._read_env_file_all()
+        self._env_all = env_all
+        ctx: Dict[str, Any] = dict(env_all)
+        # 2) управляемые ключи (с bool/дефолтами)
+        ctx.update(self._config or {})
+
+        # DEVICES_YAML: чтобы генерация zigbee2mqtt.yaml (template) не теряла devices при --force.
+        devices_yaml = ""
+        if yaml is not None:
+            devices: Dict[str, Any] = {}
+            # 1) предпочитаем отдельный файл devices
+            try:
+                if self.zigbee2mqtt_devices_yaml.exists():
+                    with open(self.zigbee2mqtt_devices_yaml, "r", encoding="utf-8") as df:
+                        d = yaml.safe_load(df) or {}
+                    if isinstance(d, dict):
+                        devices = d
+            except Exception:
+                devices = {}
+            # 2) fallback: вытаскиваем из текущего zigbee2mqtt.yaml (если отдельного файла нет/пусто)
+            if not devices:
                 try:
-                    shutil.copy(self.bridge_conf_example, self.bridge_conf)
-                except OSError:
-                    pass
+                    if self.zigbee2mqtt_yaml.exists():
+                        with open(self.zigbee2mqtt_yaml, "r", encoding="utf-8") as f:
+                            cur = yaml.safe_load(f) or {}
+                        if isinstance(cur, dict) and isinstance(cur.get("devices"), dict):
+                            devices = cur.get("devices") or {}
+                except Exception:
+                    devices = {}
+
+            if devices:
+                try:
+                    dumped = yaml.safe_dump(devices, sort_keys=False, allow_unicode=True).rstrip("\n")
+                    devices_yaml = dumped
+                except Exception:
+                    devices_yaml = ""
+
+        ctx["DEVICES_YAML"] = devices_yaml
+        return ctx
+
+    def extract_devices_to_file(self, *, backup: bool = True) -> Dict[str, Any]:
+        """
+        Вынести devices из zigbee2mqtt.yaml в zigbee2mqtt.devices.yaml (+ base без devices).
+        zigbee2mqtt.yaml не меняем (он нужен контейнеру напрямую).
+        """
+        if yaml is None:
+            return {"ok": False, "status": "no_yaml_lib", "error": "PyYAML не установлен"}
+        if not self.zigbee2mqtt_yaml.exists():
+            return {"ok": False, "status": "missing_source", "src": str(self.zigbee2mqtt_yaml)}
+
+        try:
+            with open(self.zigbee2mqtt_yaml, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            if not isinstance(data, dict):
+                data = {}
+            devices = data.get("devices")
+            if not isinstance(devices, dict):
+                devices = {}
+
+            base = dict(data)
+            base.pop("devices", None)
+
+            bkp_base = None
+            bkp_devices = None
+            if backup:
+                try:
+                    if self.zigbee2mqtt_base_yaml.exists():
+                        bkp_base = self._backup_file(self.zigbee2mqtt_base_yaml)
+                except Exception:
+                    bkp_base = None
+                try:
+                    if self.zigbee2mqtt_devices_yaml.exists():
+                        bkp_devices = self._backup_file(self.zigbee2mqtt_devices_yaml)
+                except Exception:
+                    bkp_devices = None
+
+            with open(self.zigbee2mqtt_base_yaml, "w", encoding="utf-8") as bf:
+                yaml.safe_dump(base, bf, sort_keys=False, allow_unicode=True)
+            with open(self.zigbee2mqtt_devices_yaml, "w", encoding="utf-8") as df:
+                yaml.safe_dump(devices, df, sort_keys=False, allow_unicode=True)
+
+            return {
+                "ok": True,
+                "status": "written",
+                "count": len(devices),
+                "base": str(self.zigbee2mqtt_base_yaml),
+                "devices": str(self.zigbee2mqtt_devices_yaml),
+                "backup_base": str(bkp_base) if bkp_base else None,
+                "backup_devices": str(bkp_devices) if bkp_devices else None,
+            }
+        except Exception as e:
+            return {"ok": False, "status": "error", "error": str(e)}
+
+    def _render_template_path(self, template_path: Path, context: Dict[str, Any]) -> str:
+        """Рендерит jinja2 шаблон в строку."""
+        if Environment is None:
+            raise RuntimeError("Jinja2 не установлен")
+        text = template_path.read_text(encoding="utf-8")
+        env = Environment(  # type: ignore
+            autoescape=False,
+            undefined=Undefined,  # type: ignore
+            keep_trailing_newline=True,
+            lstrip_blocks=True,
+            trim_blocks=True,
+        )
+        tpl = env.from_string(text)
+        return tpl.render(**context)
+
+    @staticmethod
+    def _backup_file(path: Path) -> Optional[Path]:
+        """Создаёт backup рядом с файлом: <name>.bak-YYYYmmdd-HHMMSS"""
+        if not path.exists():
+            return None
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup = path.with_name(path.name + f".bak-{ts}")
+        shutil.copy2(path, backup)
+        return backup
+
+    def generate_local_configs(
+        self,
+        *,
+        force: bool = False,
+        backup: bool = True,
+        zigbee2mqtt_yaml: bool = True,
+        bridge_conf: bool = True,
+        split_yaml: bool = False,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Генерация/восстановление локальных конфигов.
+
+        - zigbee2mqtt.yaml: рендерится из z2m_manager/templates/zigbee2mqtt.yaml.j2
+        - bridge.conf: рендерится из z2m_manager/templates/bridge.conf.j2
+        - split_yaml: (опционально) вынести devices в zigbee2mqtt.devices.yaml (+ base без devices) из zigbee2mqtt.yaml
+
+        Возвращает dict с результатами по каждому действию.
+        """
+        results: Dict[str, Dict[str, Any]] = {}
+
+        ctx = self._get_template_context()
+
+        def _write_from_template(tpl: Path, dst: Path, key: str) -> None:
+            if dst.exists() and not force:
+                results[key] = {"ok": True, "status": "skipped_exists", "dst": str(dst)}
+                return
+            if not tpl.exists():
+                results[key] = {"ok": False, "status": "missing_template", "src": str(tpl), "dst": str(dst)}
+                return
+
+            bkp: Optional[Path] = None
+            if dst.exists() and backup:
+                try:
+                    bkp = self._backup_file(dst)
+                except Exception:
+                    bkp = None
+
+            existed_before = dst.exists()
+            try:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                rendered = self._render_template_path(tpl, ctx)
+                dst.write_text(rendered, encoding="utf-8")
+                results[key] = {
+                    "ok": True,
+                    "status": "overwritten" if existed_before else "created",
+                    "src": str(tpl),
+                    "dst": str(dst),
+                    "backup": str(bkp) if bkp else None,
+                }
+            except Exception as e:
+                results[key] = {"ok": False, "status": "error", "dst": str(dst), "error": str(e)}
+
+        if zigbee2mqtt_yaml:
+            _write_from_template(
+                self.zigbee2mqtt_yaml_template,
+                self.zigbee2mqtt_yaml,
+                "zigbee2mqtt.yaml",
+            )
+
+        if bridge_conf:
+            _write_from_template(
+                self.bridge_conf_template,
+                self.bridge_conf,
+                "bridge.conf",
+            )
+
+        if split_yaml:
+            results["split_yaml"] = self.extract_devices_to_file(backup=backup)
+
+        return results
 
     def load_config(self) -> None:
         """Загрузка конфигурации из .env файла"""
@@ -171,16 +385,25 @@ class Z2MConfig:
         """Сохранение конфигурации MQTT бриджа"""
         self.bridge_conf.parent.mkdir(parents=True, exist_ok=True)
 
-        comment_prefix = "" if self._config["CLOUD_MQTT_ENABLED"] else "#"
+        # Предпочитаем шаблон (Jinja2) чтобы формат был единым с генерацией.
+        try:
+            ctx = self._get_template_context()
+            if self.bridge_conf_template.exists():
+                content = self._render_template_path(self.bridge_conf_template, ctx)
+            else:
+                raise FileNotFoundError("bridge.conf.j2 not found")
+        except Exception:
+            # fallback: старый формат (как раньше)
+            comment_prefix = "" if self._config["CLOUD_MQTT_ENABLED"] else "#"
 
-        # Используем placeholders если значения пустые
-        user = self._config['CLOUD_MQTT_USER'] or "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
-        password = self._config['CLOUD_MQTT_PASSWORD'] or "XXXXXXXXXX"
-        proto = (self._config.get("CLOUD_MQTT_PROTOCOL") or self.DEFAULT_CLOUD_PROTOCOL).strip().lower()
-        if proto not in ("mqttv31", "mqttv311", "mqttv50"):
-            proto = self.DEFAULT_CLOUD_PROTOCOL
+            # Используем placeholders если значения пустые
+            user = self._config['CLOUD_MQTT_USER'] or "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
+            password = self._config['CLOUD_MQTT_PASSWORD'] or "XXXXXXXXXX"
+            proto = (self._config.get("CLOUD_MQTT_PROTOCOL") or self.DEFAULT_CLOUD_PROTOCOL).strip().lower()
+            if proto not in ("mqttv31", "mqttv311", "mqttv50"):
+                proto = self.DEFAULT_CLOUD_PROTOCOL
 
-        content = f"""{comment_prefix}connection rocket
+            content = f"""{comment_prefix}connection rocket
 {comment_prefix}address {self._config['CLOUD_MQTT_HOST']}
 {comment_prefix}bridge_protocol_version {proto}
 {comment_prefix}try_private false
