@@ -1,0 +1,42 @@
+# =========================================
+# AUTO-GENERATED FILE — DO NOT EDIT MANUALLY
+# =========================================
+# This `zigbee2mqtt.yaml` was generated from `.env` using:
+# - template: `z2m_manager/templates/zigbee2mqtt.yaml.j2`
+# - command: `./z2m gen-configs --force`
+#
+# To change settings:
+# - edit `.env` (and/or the template), then re-generate the config
+# - for manual reference see `zigbee2mqtt.yaml.example`
+homeassistant: false
+permit_join: true
+
+mqtt:
+  base_topic: {{ MQTT_BASE_TOPIC | default("zigbee2mqtt") }}
+  server: {{ MQTT_SERVER | default("mqtt://mqtt:1883") }}
+{% if MQTT_USER %}
+  user: "{{ MQTT_USER }}"
+{% endif %}
+{% if MQTT_PASSWORD %}
+  password: "{{ MQTT_PASSWORD }}"
+{% endif %}
+
+serial:
+  port: {{ ZIGBEE_DEVICE | default("/dev/ttyACM0") }}
+
+frontend:
+  port: {{ FRONTEND_PORT | default(4000) }}
+  host: {{ FRONTEND_HOST | default("0.0.0.0") }}
+
+# Reduce MQTT noise
+advanced:
+  log_level: info
+  log_namespaced_levels:
+    z2m:mqtt: warning
+
+{% if DEVICES_YAML %}
+devices:
+{{ DEVICES_YAML | indent(2, true) }}
+{% endif %}
+
+

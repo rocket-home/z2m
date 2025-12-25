@@ -122,13 +122,16 @@ CLOUD_MQTT_PASSWORD=password
 4. (опционально) Wizard может проверить подключение по введённым кредам и предложить включить бридж
 
 Конфигурация бриджа сохраняется в `mosquitto/conf.d/bridge.conf`.
-Этот файл тоже **локальный** (может содержать креды) — в репозитории хранится шаблон `mosquitto/conf.d/bridge.conf.example`.
+Этот файл тоже **локальный** (может содержать креды) — в репозитории хранится пример `mosquitto/conf.d/bridge.conf.example` (для ручной настройки).
+Также есть template `z2m_manager/templates/bridge.conf.j2` — он используется менеджером для генерации `bridge.conf` из переменных `.env`.
 
 ### Zigbee2MQTT конфиг
 
 Zigbee2MQTT использует `zigbee2mqtt.yaml` (он монтируется как `/app/data/configuration.yaml`).
 После добавления устройств через веб-интерфейс Zigbee2MQTT может записывать туда параметры сети/ключи, поэтому `zigbee2mqtt.yaml` — **локальный файл**.
-В репозитории хранится безопасный шаблон `zigbee2mqtt.yaml.example` (при отсутствии `zigbee2mqtt.yaml` менеджер копирует шаблон автоматически).
+В репозитории хранится безопасный пример `zigbee2mqtt.yaml.example` (для ручной настройки).
+При отсутствии `zigbee2mqtt.yaml` менеджер создаёт его автоматически:
+- предпочитает template `z2m_manager/templates/zigbee2mqtt.yaml.j2` (рендерится из `.env` через Jinja2);
 
 ## Структура проекта
 
@@ -166,6 +169,7 @@ config, c          - Показать конфигурацию
 devices, d         - Показать USB устройства
 coordinator, coord - Определить тип координатора (ember/zstack) по USB
 permit-join        - Переключить permit_join в zigbee2mqtt.yaml (on/off)
+gen-configs        - Сгенерировать/восстановить конфиги из `.env` (templates/Jinja2)
 
 # Управление
 start              - Запустить сервисы

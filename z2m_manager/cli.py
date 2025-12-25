@@ -44,6 +44,7 @@ class Z2MCLI:
   coordinator        - Определить тип координатора (ember/zstack) по USB
   coordinator --probe [dev] - Активный probe порта (zstack точно; silabs через tool)
   permit-join        - Разрешить/запретить подключение новых устройств (permit_join) в zigbee2mqtt.yaml
+  gen-configs        - Сгенерировать/восстановить конфиги (zigbee2mqtt.yaml, bridge.conf; devices — опционально)
 
 🐳 Управление контейнерами:
   start              - Запустить все сервисы
@@ -69,6 +70,65 @@ class Z2MCLI:
   help, h            - Показать эту справку
   exit, quit, q      - Выйти
         """)
+
+    def cmd_gen_configs(self, args: list[str]) -> None:
+        """
+        Генерация/восстановление конфигов.
+        По умолчанию: создаёт только отсутствующие файлы.
+
+        Флаги:
+          --force       перезаписать существующие (с backup по умолчанию)
+          --no-backup   не создавать .bak-*
+          --only yaml|bridge|devices|all
+          --devices     перенести devices в отдельный файл (zigbee2mqtt.devices.yaml)
+        """
+        force = "--force" in args or "-f" in args
+        backup = not ("--no-backup" in args)
+        only: str = "all"
+        if "--only" in args:
+            try:
+                only = args[args.index("--only") + 1].strip().lower()
+            except Exception:
+                only = "all"
+
+        do_yaml = only in ("all", "yaml", "z2m", "zigbee2mqtt")
+        do_bridge = only in ("all", "bridge", "mosquitto")
+        do_split = ("--devices" in args) or (only in ("devices", "split", "base"))
+
+        res = self.config.generate_local_configs(
+            force=force,
+            backup=backup,
+            zigbee2mqtt_yaml=do_yaml,
+            bridge_conf=do_bridge,
+            split_yaml=do_split,
+        )
+
+        # Человекочитаемый вывод
+        print("\n🧩 Генерация конфигов:")
+        print("-" * 50)
+        for k, r in res.items():
+            ok = r.get("ok", False)
+            status = r.get("status")
+            if ok and status == "skipped_exists":
+                print(f"  ⏭️  {k}: пропущено (уже существует)")
+            elif ok:
+                extra = ""
+                b = r.get("backup")
+                if b:
+                    extra = f" (backup: {b})"
+                if k == "split_yaml":
+                    bb = r.get("backup_base")
+                    bd = r.get("backup_devices")
+                    extras = []
+                    if bb:
+                        extras.append(f"backup base: {bb}")
+                    if bd:
+                        extras.append(f"backup devices: {bd}")
+                    extra = f" ({', '.join(extras)})" if extras else ""
+                print(f"  ✅ {k}: {status}{extra}")
+            else:
+                err = r.get("error") or r.get("status")
+                print(f"  ❌ {k}: {err}")
 
     def cmd_status(self, compact: bool = False):
         """Показать статус контейнеров"""
@@ -525,6 +585,8 @@ class Z2MCLI:
                         self.cmd_set_cloud_pass(args[0])
                     else:
                         print("❌ Укажите пароль: set-cloud-pass password")
+                elif command in ('gen-configs', 'gen-config', 'generate-configs', 'generate-config'):
+                    self.cmd_gen_configs(args)
                 else:
                     print(f"❌ Неизвестная команда: {command}")
                     print("Введите 'help' для справки")
@@ -564,6 +626,7 @@ def print_usage():
   coordinator --probe [dev] Активный probe (zstack через serial, silabs через tool)
   permit-join on|off          permit_join в zigbee2mqtt.yaml
   permit-join on|off --mqtt [сек]  runtime permit_join через MQTT (по умолчанию 60 сек)
+  gen-configs [--force] [--no-backup] [--only yaml|bridge|devices|all] [--devices]
   
   help, -h, --help    Показать эту справку
 
@@ -612,6 +675,8 @@ def run_quick_command(command: str, args: list) -> int:
         cli.cmd_coordinator(args)
     elif command in ('permit-join', 'permit_join', 'permitjoin'):
         cli.cmd_permit_join(args)
+    elif command in ('gen-configs', 'gen-config', 'generate-configs', 'generate-config'):
+        cli.cmd_gen_configs(args)
     elif command in ('help', '-h', '--help'):
         print_usage()
     else:
@@ -632,6 +697,7 @@ QUICK_COMMANDS = {
     'doctor',
     'coordinator', 'coord',
     'permit-join', 'permit_join', 'permitjoin',
+    'gen-configs', 'gen-config', 'generate-configs', 'generate-config',
     'help', '-h', '--help',
 }
 

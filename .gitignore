@@ -18,6 +18,9 @@ zigbee2mqtt.devices.yaml
 mosquitto/conf.d/bridge.conf
 mosquitto/etc/
 
+# Backups created by manager (.bak-YYYYmmdd-HHMMSS)
+*.bak-*
+
 # Local files
 .local/
 .deps_installed

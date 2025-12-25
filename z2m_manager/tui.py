@@ -1040,8 +1040,10 @@ class ControlScreen(Screen):
                 yield ListItem(Label("🛑 Остановить"), id="menu_stop")
                 yield ListItem(Label("🔄 Перезапустить"), id="menu_restart")
                 yield ListItem(Label("📋 Логи"), id="menu_logs")
+                yield ListItem(Label("🗂️ Конфиги"), id="menu_configs")
                 yield ListItem(Label("🔓 permit_join: ВЫКЛ"), id="menu_permit_join")
                 yield ListItem(Label("🗑️ Удалить контейнеры"), id="menu_down")
+                yield ListItem(Label("💀 Зачистить контейнеры (с volume)"), id="menu_purge")
                 yield ListItem(Label("↩ Назад"), id="menu_back")
         yield Footer()
 
@@ -1089,6 +1091,8 @@ class ControlScreen(Screen):
             await self.app.run_docker_operation("🔄 Перезапуск сервисов", self.app._do_restart)
         elif item_id == "menu_logs":
             self.app.push_screen(LogsScreen())
+        elif item_id == "menu_configs":
+            self.app.push_screen(ConfigFilesScreen())
         elif item_id == "menu_permit_join":
             cur = self.app.config.get_z2m_permit_join()
             # если неизвестно — считаем, что сейчас выключено
@@ -1104,6 +1108,148 @@ class ControlScreen(Screen):
             self._update_permit_join_label()
         elif item_id == "menu_down":
             self.app.push_screen(ConfirmDownScreen())
+        elif item_id == "menu_purge":
+            self.app.push_screen(ConfirmPurgeScreen())
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+
+class ConfirmConfigOverwriteScreen(ArrowNavScreen):
+    """Подтверждение перезаписи конфигов из шаблонов."""
+
+    BINDINGS = [Binding("escape", "back", "Отмена")]
+
+    def __init__(self, title: str, message: str, on_yes):
+        super().__init__()
+        self._title = title
+        self._message = message
+        self._on_yes = on_yes
+
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Static(self._title, classes="screen-title")
+            yield Static(self._message, classes="config-hint")
+            with Horizontal(classes="button-row"):
+                yield Button("✅ Продолжить", id="cfg_overwrite_yes", variant="primary")
+                yield Button("❌ Отмена", id="cfg_overwrite_no", variant="default")
+        yield Footer()
+
+    @on(Button.Pressed, "#cfg_overwrite_yes")
+    async def on_yes(self) -> None:
+        self.app.pop_screen()
+        await self._on_yes()
+
+    @on(Button.Pressed, "#cfg_overwrite_no")
+    def on_no(self) -> None:
+        self.app.pop_screen()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+
+class ConfigFilesScreen(Screen):
+    """Экран обслуживания конфигов (генерация/восстановление)."""
+
+    BINDINGS = [Binding("escape", "back", "Назад")]
+
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Static("🗂️ Конфиги", classes="screen-title")
+            yield Static(
+                "Здесь можно создать отсутствующие конфиги или восстановить их из шаблонов.\n"
+                "Генерация идёт из template-файлов (Jinja2) и переменных .env.\n"
+                "Перезапись делает backup рядом с файлом (.bak-YYYYmmdd-HHMMSS).",
+                classes="config-hint",
+            )
+            with ListView(id="configs_menu"):
+                yield ListItem(Label("🧩 Создать отсутствующие (safe)"), id="cfg_safe")
+                yield ListItem(Label("♻️ Пересоздать из шаблонов (force + backup)"), id="cfg_force")
+                yield ListItem(Label("📦 Перенести devices в отдельный файл"), id="cfg_devices")
+                yield ListItem(Label("↩ Назад"), id="cfg_back")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        self.query_one("#configs_menu", ListView).focus()
+        self.query_one("#configs_menu", ListView).index = 0
+
+    def _notify_results(self, res: dict) -> None:
+        ok = all(bool(v.get("ok")) for v in res.values()) if res else True
+        if ok:
+            self.app.notify("✅ Готово")
+        else:
+            self.app.notify("⚠️ Есть ошибки (подробности в консоли/файлах)", severity="warning")
+
+    def _should_prompt_restart(self, res: dict) -> bool:
+        """Нужен ли prompt на перезапуск: если меняли конфиги, которые читает контейнер."""
+        try:
+            z = res.get("zigbee2mqtt.yaml") if isinstance(res, dict) else None
+            b = res.get("bridge.conf") if isinstance(res, dict) else None
+            touched = False
+            if isinstance(z, dict) and z.get("status") in ("created", "overwritten"):
+                touched = True
+            if isinstance(b, dict) and b.get("status") in ("created", "overwritten"):
+                touched = True
+            return touched
+        except Exception:
+            return False
+
+    async def _do_safe(self) -> None:
+        res = await asyncio.to_thread(
+            self.app.config.generate_local_configs,
+            force=False,
+            backup=True,
+            zigbee2mqtt_yaml=True,
+            bridge_conf=True,
+            split_yaml=False,
+        )
+        self._notify_results(res)
+        if self._should_prompt_restart(res):
+            self.app.prompt_restart_if_running()
+
+    async def _do_force(self) -> None:
+        res = await asyncio.to_thread(
+            self.app.config.generate_local_configs,
+            force=True,
+            backup=True,
+            zigbee2mqtt_yaml=True,
+            bridge_conf=True,
+            split_yaml=False,
+        )
+        self._notify_results(res)
+        if self._should_prompt_restart(res):
+            self.app.prompt_restart_if_running()
+
+    async def _do_devices(self) -> None:
+        res = await asyncio.to_thread(self.app.config.extract_devices_to_file, backup=True)
+        self._notify_results({"devices": res})
+
+    @on(ListView.Selected)
+    async def on_selected(self, event: ListView.Selected) -> None:
+        item_id = event.item.id
+        if item_id == "cfg_back":
+            self.app.pop_screen()
+            return
+
+        if item_id == "cfg_safe":
+            await self._do_safe()
+            return
+
+        if item_id == "cfg_devices":
+            await self._do_devices()
+            return
+
+        if item_id == "cfg_force":
+            msg = (
+                "Будут перезаписаны:\n"
+                f"- {self.app.config.zigbee2mqtt_yaml}\n"
+                f"- {self.app.config.bridge_conf}\n\n"
+                "Перед перезаписью будет создан backup рядом с каждым файлом.\n"
+                "Продолжить?"
+            )
+            self.app.push_screen(
+                ConfirmConfigOverwriteScreen("♻️ Перезаписать конфиги?", msg, on_yes=self._do_force)
+            )
 
     def action_back(self) -> None:
         self.app.pop_screen()
@@ -1176,6 +1322,44 @@ class ConfirmDownScreen(ArrowNavScreen):
         await self.app.run_docker_operation("🗑️ Удаление контейнеров", self.app._do_down)
 
     @on(Button.Pressed, "#confirm_down_no")
+    def on_no(self) -> None:
+        self.app.pop_screen()
+
+    def action_back(self) -> None:
+        self.app.pop_screen()
+
+
+class ConfirmPurgeScreen(ArrowNavScreen):
+    """Подтверждение очистки контейнеров вместе с volume (docker-compose down -v)."""
+
+    BINDINGS = [Binding("escape", "back", "Отмена")]
+
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Static("💀 Зачистить контейнеры и volume?", classes="screen-title")
+            yield Static(
+                "Это выполнит docker-compose down -v.\n"
+                "Будут удалены контейнеры И volume (данные Mosquitto/Zigbee2MQTT/NodeRED).\n"
+                "Действие необратимо.",
+                classes="config-hint",
+            )
+            with Horizontal(classes="button-row"):
+                yield Button("💀 Зачистить", id="confirm_purge_yes", variant="error")
+                yield Button("❌ Отмена", id="confirm_purge_no", variant="default")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        try:
+            self.query_one("#confirm_purge_yes", Button).focus()
+        except Exception:
+            pass
+
+    @on(Button.Pressed, "#confirm_purge_yes")
+    async def on_yes(self) -> None:
+        self.app.pop_screen()
+        await self.app.run_docker_operation("💀 Зачистка контейнеров и volume", self.app._do_purge)
+
+    @on(Button.Pressed, "#confirm_purge_no")
     def on_no(self) -> None:
         self.app.pop_screen()
 
@@ -1488,6 +1672,9 @@ class Z2MApp(App):
 
     def _do_down(self, log_callback) -> bool:
         return self.docker_manager.down_services(log_callback)
+
+    def _do_purge(self, log_callback) -> bool:
+        return self.docker_manager.down_services_with_volumes(log_callback)
 
     def action_quit(self) -> None:
         self.exit()
