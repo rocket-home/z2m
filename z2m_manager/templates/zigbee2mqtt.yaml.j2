@@ -30,9 +30,9 @@ frontend:
 
 # Reduce MQTT noise
 advanced:
-  log_level: info
+  log_level: warn
   log_namespaced_levels:
-    z2m:mqtt: warning
+    z2m:mqtt: warn
 
 {% if DEVICES_YAML %}
 devices:
