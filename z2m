@@ -6,7 +6,18 @@
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve symlink so script can be installed as /usr/local/bin/z2m -> <repo>/z2m
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  LINK="$(readlink "$SOURCE")"
+  if [[ "$LINK" != /* ]]; then
+    SOURCE="$DIR/$LINK"
+  else
+    SOURCE="$LINK"
+  fi
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/.venv"
 UV_DIR="$SCRIPT_DIR/.uv"
 MARKER_FILE="$SCRIPT_DIR/.deps_installed"

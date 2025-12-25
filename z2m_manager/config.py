@@ -720,7 +720,17 @@ class Z2MConfig:
         """Получение ошибки конфигурации устройства"""
         if not self.zigbee_device:
             return "Zigbee устройство не выбрано"
-        if not Path(self.zigbee_device).exists():
+        p = Path(self.zigbee_device)
+        if not p.exists():
             return f"Устройство {self.zigbee_device} не найдено"
+        # Docker требует именно device node, а не просто файл/папку/битый линк
+        try:
+            import stat
+            mode = p.stat().st_mode
+            if not stat.S_ISCHR(mode):
+                return f"Устройство {self.zigbee_device} не является device node"
+        except Exception:
+            # если не смогли проверить тип — считаем, что путь некорректный
+            return f"Не удалось проверить устройство {self.zigbee_device}"
         return None
 

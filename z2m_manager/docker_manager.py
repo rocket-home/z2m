@@ -50,6 +50,15 @@ class DockerManager:
         env["MQTT_USER"] = self.config.mqtt_user
         env["MQTT_PASSWORD"] = self.config.mqtt_password
         env["ZIGBEE_DEVICE"] = self.config.zigbee_device
+        # host-side device node (docker требует именно char device, symlink не подходит)
+        host = self.config.zigbee_device
+        resolved = host
+        try:
+            resolved = os.path.realpath(host)
+        except Exception:
+            resolved = host
+        # предпочитаем реальный путь, но если он не существует — оставляем как есть
+        env["ZIGBEE_DEVICE_HOST"] = resolved if os.path.exists(resolved) else host
         
         # Добавляем UID/GID текущего пользователя для запуска контейнеров
         env["UID"] = str(os.getuid())
