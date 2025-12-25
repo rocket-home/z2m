@@ -203,7 +203,7 @@ class DockerManager:
     def restart_services(self, log_callback: Optional[Callable[[str], None]] = None) -> bool:
         """Перезапуск всех сервисов"""
         if log_callback:
-            log_callback("🔄 Перезапуск docker compose restart...")
+            log_callback("🔄 Перезапуск docker compose up -d --force-recreate...")
 
         device_error = self.config.get_device_error()
         if device_error:
@@ -215,7 +215,9 @@ class DockerManager:
         # Сначала сохраняем конфигурацию
         self.config.save_config()
 
-        return self._run_compose(["restart"], log_callback)
+        # ВАЖНО: `restart` не пересоздаёт контейнеры и не применяет изменения в devices/env.
+        # Поэтому используем `up -d --force-recreate`, чтобы гарантированно применить новый ZIGBEE_DEVICE.
+        return self._run_compose(["up", "-d", "--build", "--force-recreate"], log_callback)
 
     def down_services(self, log_callback: Optional[Callable[[str], None]] = None) -> bool:
         """Полная остановка и удаление контейнеров"""

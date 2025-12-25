@@ -114,6 +114,14 @@ def run_wizard() -> bool:
     # === Шаг 1: Выбор USB устройства ===
     print()
     print(colored("━━━ Шаг 2/4: Zigbee USB адаптер ━━━", "blue"))
+
+    # Если udev-правила уже создали стабильный линк — лучше использовать его.
+    if Path("/dev/zigbee").exists():
+        if ask_yes_no("\nНайден /dev/zigbee. Использовать его как устройство по умолчанию?", default=True):
+            config.zigbee_device = "/dev/zigbee"
+            print("✅ Устройство установлено: /dev/zigbee")
+        else:
+            print("ℹ️ Ок, выберите конкретный порт ниже.")
     
     devices = DeviceDetector.detect_serial_devices()
     zigbee_devices = [d for d in devices if d.get('is_zigbee', False)]

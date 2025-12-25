@@ -278,7 +278,8 @@ class Z2MConfig:
         self._config = {
             "MQTT_USER": "",
             "MQTT_PASSWORD": "",
-            "ZIGBEE_DEVICE": "/dev/ttyACM0",
+            # Стабильный путь (создаётся udev-правилами из репозитория)
+            "ZIGBEE_DEVICE": "/dev/zigbee",
             "NODERED_ENABLED": False,
             "CLOUD_MQTT_HOST": self.DEFAULT_CLOUD_HOST,
             "CLOUD_MQTT_USER": "",
