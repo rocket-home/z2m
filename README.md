@@ -15,9 +15,6 @@ sudo apt install -y python3 python3-venv curl
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER
 
-# Docker Compose (плагин)
-sudo apt install -y docker-compose-plugin
-
 # Перелогиниться или выполнить:
 newgrp docker
 ```
@@ -52,6 +49,15 @@ ls -la /dev/ttyUSB* /dev/ttyACM* /dev/zigbee 2>/dev/null
 ```bash
 cd z2m
 ./z2m
+```
+
+### Установка команды `z2m` в систему
+
+Чтобы запускать менеджер из любой директории командой `z2m`:
+
+```bash
+cd z2m
+./install.sh
 ```
 
 При первом запуске автоматически:
@@ -145,6 +151,7 @@ CLOUD_MQTT_PASSWORD=password
 - **Port**: `1883`
 - **Username**: значение `MQTT_USER` из `.env`
 - **Password**: значение `MQTT_PASSWORD` из `.env`
+  - по умолчанию: `user` / `password` (если вы не меняли их в настройках)
 
 Примеры топиков Zigbee2MQTT:
 - Подписаться на всё: `zigbee2mqtt/#`
