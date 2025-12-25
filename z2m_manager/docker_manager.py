@@ -4,6 +4,7 @@
 import subprocess
 import json
 import os
+import shutil
 from typing import Dict, List, Optional, Callable
 from pathlib import Path
 
@@ -17,6 +18,31 @@ class DockerManager:
         self.config = config
         self.base_dir = config.base_dir
         self.compose_file = self.base_dir / "docker-compose.yml"
+        self._compose_base_cmd = self._detect_compose_cmd()
+
+    def _detect_compose_cmd(self) -> List[str]:
+        """
+        Возвращает базовую команду для compose:
+        - предпочитает `docker-compose` (v1/пакет)
+        - иначе использует `docker compose` (плагин)
+        """
+        if shutil.which("docker-compose"):
+            return ["docker-compose"]
+        # docker compose plugin
+        if shutil.which("docker"):
+            try:
+                res = subprocess.run(
+                    ["docker", "compose", "version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                if res.returncode == 0:
+                    return ["docker", "compose"]
+            except Exception:
+                pass
+        # fallback: пусть упадёт как раньше, но с более понятной ошибкой в логах
+        return ["docker-compose"]
 
     def _get_compose_env(self) -> Dict[str, str]:
         """Формирование переменных окружения для docker-compose"""
@@ -32,9 +58,8 @@ class DockerManager:
         return env
 
     def _get_compose_cmd(self, *args) -> List[str]:
-        """Формирование команды docker-compose"""
-        # Используем docker-compose (через дефис) с флагом -f
-        cmd = ["docker-compose", "-f", str(self.compose_file)]
+        """Формирование команды docker compose/docker-compose"""
+        cmd = [*self._compose_base_cmd, "-f", str(self.compose_file)]
 
         # Добавляем профили
         for profile in self.config.get_compose_profiles():

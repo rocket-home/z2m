@@ -15,6 +15,9 @@ sudo apt install -y python3 python3-venv curl
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER
 
+# Docker Compose (плагин)
+sudo apt install -y docker-compose-plugin
+
 # Перелогиниться или выполнить:
 newgrp docker
 ```
@@ -124,6 +127,29 @@ CLOUD_MQTT_PASSWORD=password
 Конфигурация бриджа сохраняется в `mosquitto/conf.d/bridge.conf`.
 Этот файл тоже **локальный** (может содержать креды) — в репозитории хранится пример `mosquitto/conf.d/bridge.conf.example` (для ручной настройки).
 Также есть template `z2m_manager/templates/bridge.conf.j2` — он используется менеджером для генерации `bridge.conf` из переменных `.env`.
+
+### Node-RED (локальные автоматизации)
+
+1. Включите Node-RED:
+   - в TUI: **Настройки → 🔴 NodeRED → Вкл**
+   - или CLI: `./z2m enable-nodered`
+
+2. Запустите сервисы (если ещё не запущены): `./z2m start`
+
+3. Откройте Node-RED: `http://<host>:1880`
+
+#### Подключение Node-RED к локальному MQTT (Mosquitto)
+
+В Node-RED добавьте ноду **MQTT in** или **MQTT out** → откройте настройки **Server** → **Add new mqtt-broker**:
+- **Server**: `mqtt`
+- **Port**: `1883`
+- **Username**: значение `MQTT_USER` из `.env`
+- **Password**: значение `MQTT_PASSWORD` из `.env`
+
+Примеры топиков Zigbee2MQTT:
+- Подписаться на всё: `zigbee2mqtt/#`
+- Команды устройствам: `zigbee2mqtt/<friendly_name>/set`
+- Состояние устройства: `zigbee2mqtt/<friendly_name>`
 
 ### Zigbee2MQTT конфиг
 
