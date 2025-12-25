@@ -16,7 +16,7 @@ frontend:
   host: 0.0.0.0
 
 advanced:
-  log_level: info
+  log_level: warning
   log_namespaced_levels:
     z2m:mqtt: warning
 
