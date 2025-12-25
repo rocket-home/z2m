@@ -276,8 +276,9 @@ class Z2MConfig:
     def load_config(self) -> None:
         """Загрузка конфигурации из .env файла"""
         self._config = {
-            "MQTT_USER": "",
-            "MQTT_PASSWORD": "",
+            "MQTT_USER": "user",
+            # Дефолтный пароль (пользователь может поменять в настройках).
+            "MQTT_PASSWORD": "password",
             # Стабильный путь (создаётся udev-правилами из репозитория)
             "ZIGBEE_DEVICE": "/dev/zigbee",
             "NODERED_ENABLED": False,

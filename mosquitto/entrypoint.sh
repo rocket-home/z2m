@@ -4,6 +4,14 @@ set -e
 # Удаляем listener.conf если есть, чтобы избежать конфликтов (conf.d может быть read-only)
 rm -f /mosquitto/conf.d/listener.conf 2>/dev/null || true
 
+# В базовом mosquitto.conf у нас всегда указан password_file.
+# Mosquitto не стартует, если файл не существует, даже когда allow_anonymous=true.
+# Поэтому гарантируем, что файл есть (пустой допустим).
+mkdir -p /mosquitto/etc 2>/dev/null || true
+touch /mosquitto/etc/password 2>/dev/null || true
+chown root:root /mosquitto/etc/password 2>/dev/null || true
+chmod 600 /mosquitto/etc/password 2>/dev/null || true
+
 # Проверяем, заданы ли переменные окружения для пользователя
 if [ -n "$MQTT_USER" ] && [ -n "$MQTT_PASSWORD" ]; then
     # Проверяем, существует ли файл password и не пустой ли он
