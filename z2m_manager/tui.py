@@ -1699,6 +1699,13 @@ class RestartPromptScreen(ArrowNavScreen):
 
     @on(Button.Pressed, "#restart_now")
     async def on_restart_now(self) -> None:
+        device_error = self.app.config.get_device_error()
+        if device_error:
+            self.app.notify(f"⚠️ {device_error}", severity="error")
+            self.app.pop_screen()
+            self.app.push_screen(DeviceScreen())
+            return
+
         self.app.pop_screen()
         await self.app.run_docker_operation("🔄 Перезапуск сервисов", self.app._do_restart)
 
