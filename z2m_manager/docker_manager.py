@@ -181,6 +181,13 @@ class DockerManager:
         if log_callback:
             log_callback("🚀 Запуск docker compose up -d...")
 
+        device_error = self.config.get_device_error()
+        if device_error:
+            if log_callback:
+                log_callback(f"❌ {device_error}")
+                log_callback("💡 Откройте: Настройки → 🔌 Z2M устройство, или выполните: ./z2m set-device /dev/zigbee")
+            return False
+
         # Сначала сохраняем конфигурацию
         self.config.save_config()
 
@@ -197,6 +204,13 @@ class DockerManager:
         """Перезапуск всех сервисов"""
         if log_callback:
             log_callback("🔄 Перезапуск docker compose restart...")
+
+        device_error = self.config.get_device_error()
+        if device_error:
+            if log_callback:
+                log_callback(f"❌ {device_error}")
+                log_callback("💡 Откройте: Настройки → 🔌 Z2M устройство, или выполните: ./z2m set-device /dev/zigbee")
+            return False
 
         # Сначала сохраняем конфигурацию
         self.config.save_config()
