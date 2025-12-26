@@ -348,10 +348,24 @@ class Z2MConfig:
         self.bridge_conf_last_error = None
         # Template merge: сохраняем неизвестные переменные и комментарии как есть,
         # обновляем только управляемые ключи.
+        # Docker требует host-side "device node" (не symlink), поэтому пишем отдельную переменную.
+        zigbee_device_host = ""
+        try:
+            import stat
+            dev = str(self._config.get("ZIGBEE_DEVICE", "") or "")
+            real = os.path.realpath(dev) if dev else ""
+            if real and Path(real).exists():
+                mode = Path(real).stat().st_mode
+                if stat.S_ISCHR(mode):
+                    zigbee_device_host = real
+        except Exception:
+            zigbee_device_host = ""
+
         updates: Dict[str, str] = {
             "MQTT_USER": str(self._config["MQTT_USER"]),
             "MQTT_PASSWORD": str(self._config["MQTT_PASSWORD"]),
             "ZIGBEE_DEVICE": str(self._config["ZIGBEE_DEVICE"]),
+            "ZIGBEE_DEVICE_HOST": str(zigbee_device_host),
             "NODERED_ENABLED": "true" if self._config["NODERED_ENABLED"] else "false",
             "CLOUD_MQTT_HOST": str(self._config["CLOUD_MQTT_HOST"]),
             "CLOUD_MQTT_USER": str(self._config["CLOUD_MQTT_USER"]),
@@ -363,6 +377,7 @@ class Z2MConfig:
             "MQTT_USER",
             "MQTT_PASSWORD",
             "ZIGBEE_DEVICE",
+            "ZIGBEE_DEVICE_HOST",
             "NODERED_ENABLED",
             "CLOUD_MQTT_HOST",
             "CLOUD_MQTT_USER",
