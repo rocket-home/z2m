@@ -6,7 +6,7 @@ services:
       - 9001:9001
     volumes:
       - mosquitto:/mosquitto/data
-      - ${PWD}/mosquitto/conf.d:/mosquitto/conf.d:ro
+      - ./mosquitto/conf.d:/mosquitto/conf.d:ro
       - mosquitto_etc:/mosquitto/etc
     environment:
       - MQTT_USER=${MQTT_USER:-user}
@@ -29,11 +29,11 @@ services:
     devices:
       # Docker не принимает symlink как "device node", поэтому:
       # - ZIGBEE_DEVICE_HOST: реальный /dev/tty* на хосте
-      # - /dev/zigbee: стабильное имя внутри контейнера
-      - "${ZIGBEE_DEVICE_HOST:-/dev/ttyACM0}:/dev/zigbee"
+      # - ZIGBEE_DEVICE: путь устройства внутри контейнера (по умолчанию /dev/zigbee)
+      - "${ZIGBEE_DEVICE_HOST:-/dev/ttyACM0}:${ZIGBEE_DEVICE:-/dev/zigbee}"
     volumes:
       - zigbee2mqtt:/app/data
-      - ${PWD}/zigbee2mqtt.yaml:/app/data/configuration.yaml
+      - ./zigbee2mqtt.yaml:/app/data/configuration.yaml
     restart: unless-stopped
 volumes:
   mosquitto:

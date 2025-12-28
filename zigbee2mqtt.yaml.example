@@ -8,7 +8,8 @@ mqtt:
   server: "mqtt://mqtt:1883"
 
 serial:
-  port: /dev/ttyUSB0
+  # В контейнере по умолчанию есть стабильное имя /dev/zigbee (см. docker-compose.yml)
+  port: /dev/zigbee
 
 # Frontend (web interface)
 frontend:
