@@ -1720,4 +1720,10 @@ class RestartPromptScreen(ArrowNavScreen):
 def run_tui():
     """Запуск TUI приложения"""
     app = Z2MApp()
-    app.run()
+    # Textual включает mouse-tracking по умолчанию, из-за чего в некоторых терминалах
+    # перестают работать привычные выделение/копирование и вставка правой кнопкой.
+    # Отключаем mouse по умолчанию, но оставляем совместимость со старыми версиями.
+    try:
+        app.run(mouse=False)
+    except TypeError:
+        app.run()
