@@ -22,7 +22,8 @@ mqtt:
 {% endif %}
 
 serial:
-  port: {{ ZIGBEE_DEVICE | default("/dev/ttyACM0") }}
+  # В docker-compose устройство пробрасывается внутрь контейнера в ZIGBEE_DEVICE (по умолчанию /dev/zigbee)
+  port: {{ ZIGBEE_DEVICE | default("/dev/zigbee") }}
 
 frontend:
   port: {{ FRONTEND_PORT | default(4000) }}

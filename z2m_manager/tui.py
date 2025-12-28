@@ -85,6 +85,7 @@ class LogsScreen(Screen):
         self.follow = follow
         self._follow_task: Optional[asyncio.Task] = None
         self._follow_process = None
+        self._follow_stopping: bool = False
 
     def compose(self) -> ComposeResult:
         with Container():
@@ -99,6 +100,11 @@ class LogsScreen(Screen):
             self.start_follow()
         else:
             self.load_logs()
+
+    def on_unmount(self) -> None:
+        # ВАЖНО: если экран закрывают, а follow ещё пишет в Log,
+        # Log может оказаться "оторван" от App и словить NoActiveAppError.
+        self.stop_follow()
 
     def action_back(self) -> None:
         self.stop_follow()
@@ -175,24 +181,50 @@ class LogsScreen(Screen):
             if line.strip():
                 log_widget.write_line(line)
 
+    def _safe_write_line(self, text: str) -> None:
+        """Писать в Log только пока экран/виджет смонтированы."""
+        try:
+            if not getattr(self, "is_mounted", True):
+                return
+            log_widget = self.query_one("#logs_output", Log)
+            if not getattr(log_widget, "is_mounted", True):
+                return
+            log_widget.write_line(text)
+        except Exception:
+            # Экран уже закрыт / виджет размонтирован / app контекст недоступен
+            return
+
     def stop_follow(self) -> None:
         """Остановить follow-процесс и таску."""
+        self._follow_stopping = True
         if self._follow_task is not None:
             self._follow_task.cancel()
             self._follow_task = None
         if self._follow_process is not None:
             try:
+                # Закрываем stdout чтобы разблокировать readline в to_thread
+                try:
+                    if getattr(self._follow_process, "stdout", None) is not None:
+                        self._follow_process.stdout.close()
+                except Exception:
+                    pass
                 self._follow_process.terminate()
+            except Exception:
+                pass
+            try:
+                # На всякий случай: если не завершился — прибьём
+                self._follow_process.kill()
             except Exception:
                 pass
             self._follow_process = None
 
     def start_follow(self, restart: bool = False) -> None:
         """Запустить стрим логов docker-compose logs -f."""
+        self._follow_stopping = False
         if not hasattr(self.app, 'docker_manager'):
             log_widget = self.query_one("#logs_output", Log)
             log_widget.clear()
-            log_widget.write_line("❌ Docker manager не инициализирован")
+            self._safe_write_line("❌ Docker manager не инициализирован")
             return
 
         if self._follow_task is not None or self._follow_process is not None:
@@ -202,7 +234,7 @@ class LogsScreen(Screen):
 
         log_widget = self.query_one("#logs_output", Log)
         log_widget.clear()
-        log_widget.write_line("⏳ Подключаюсь к логам... (f — переключить режим)")
+        self._safe_write_line("⏳ Подключаюсь к логам... (f — переключить режим)")
 
         self._follow_process = self.app.docker_manager.get_logs(
             service=self.current_service,
@@ -214,12 +246,20 @@ class LogsScreen(Screen):
             assert self._follow_process is not None
             proc = self._follow_process
             # Читаем блокирующие readline в отдельном потоке
-            while True:
-                line = await asyncio.to_thread(proc.stdout.readline)
-                if line == '' and proc.poll() is not None:
-                    break
-                if line:
-                    log_widget.write_line(line.rstrip("\n"))
+            try:
+                while True:
+                    if self._follow_stopping:
+                        break
+                    line = await asyncio.to_thread(proc.stdout.readline)
+                    if self._follow_stopping:
+                        break
+                    if line == '' and proc.poll() is not None:
+                        break
+                    if line:
+                        self._safe_write_line(line.rstrip("\n"))
+            except asyncio.CancelledError:
+                # Нормально при закрытии экрана/перезапуске follow
+                return
 
         self._follow_task = asyncio.create_task(_reader())
 
