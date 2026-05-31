@@ -11,6 +11,8 @@ services:
     environment:
       - MQTT_USER=${MQTT_USER:-user}
       - MQTT_PASSWORD=${MQTT_PASSWORD}
+    extra_hosts:
+      - "${CLOUD_MQTT_HOST}:${CLOUD_MQTT_IP}"
     restart: unless-stopped
   nodered:
     image: nodered/node-red
