@@ -20,6 +20,15 @@ advanced:
   log_level: warn
   log_namespaced_levels:
     z2m:mqtt: warning
+  # ISO timestamp of last Zigbee message per device (offline diagnostics).
+  last_seen: ISO_8601
+
+# Publish zigbee2mqtt/<device>/availability (online/offline). active = mains, passive = battery.
+availability:
+  active:
+    timeout: 10
+  passive:
+    timeout: 1500
 
 
 

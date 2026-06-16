@@ -1,3 +1,10 @@
+# Cap container log size so MAC-no-ack spam can't fill the SD card.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   mqtt:
     build: ./mosquitto/
@@ -14,6 +21,14 @@ services:
     extra_hosts:
       - "${CLOUD_MQTT_HOST}:${CLOUD_MQTT_IP}"
     restart: unless-stopped
+    logging: *default-logging
+    # $$SYS/broker/version is retained -> returns immediately (anonymous allowed).
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-h", "localhost", "-t", "$$SYS/broker/version", "-C", "1", "-W", "3"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
   nodered:
     image: nodered/node-red
     user: "${UID:-1000}:${GID:-1000}"
@@ -24,6 +39,7 @@ services:
     volumes:
       - nodered:/data
     restart: unless-stopped
+    logging: *default-logging
   zigbee2mqtt:
     image: koenkk/zigbee2mqtt:1.42.0
     ports:
@@ -37,6 +53,15 @@ services:
       - zigbee2mqtt:/app/data
       - ./zigbee2mqtt.yaml:/app/data/configuration.yaml
     restart: unless-stopped
+    logging: *default-logging
+    # Image ships wget (no curl); frontend serves / -> 200. Generous start_period for
+    # coordinator init. Healthcheck = visibility only (unless-stopped doesn't restart unhealthy).
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:4000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 volumes:
   mosquitto:
   mosquitto_etc:

@@ -222,6 +222,70 @@ def check_ports() -> DoctorCheck:
     return DoctorCheck("Порты", True, "1883, 1880, 4000 свободны")
 
 
+def _runtime_status():
+    """(config, docker_status_dict) или (None, {}) при ошибке. Не падает."""
+    try:
+        from .config import Z2MConfig
+        from .docker_manager import DockerManager
+        cfg = Z2MConfig()
+        return cfg, DockerManager(cfg).get_container_status()
+    except Exception:
+        return None, {}
+
+
+def check_containers_healthy() -> DoctorCheck:
+    """Состояние контейнеров (Health из healthcheck'ов, если заданы). Информационная."""
+    _, status = _runtime_status()
+    if not status:
+        return DoctorCheck("Контейнеры", True, "не запущены (стек остановлен)")
+    bad = []
+    for service, info in status.items():
+        state = str(info.get("overall", "unknown")).lower()
+        if "running" not in state or "unhealthy" in state:
+            bad.append(f"{service}={info.get('overall')}")
+    if bad:
+        return DoctorCheck("Контейнеры", False, "проблемы: " + ", ".join(bad),
+                           "Смотрите ./z2m logs <сервис>")
+    return DoctorCheck("Контейнеры", True, f"все running ({len(status)})")
+
+
+def check_mqtt_reachable() -> DoctorCheck:
+    """Доступность локального MQTT. Пропуск, если стек не запущен."""
+    cfg, status = _runtime_status()
+    if not status or cfg is None:
+        return DoctorCheck("MQTT", True, "пропуск (стек остановлен)")
+    try:
+        from .mqtt_test import test_mqtt_connection
+        res = test_mqtt_connection(host="127.0.0.1", username=cfg.mqtt_user, password=cfg.mqtt_password)
+        return DoctorCheck("MQTT", res.ok, res.message,
+                           "" if res.ok else "Проверьте контейнер mqtt и креды (.env)")
+    except Exception as e:
+        return DoctorCheck("MQTT", True, f"пропуск (ошибка проверки: {e})")
+
+
+def check_devices_online() -> DoctorCheck:
+    """Офлайн-устройства по availability. Всегда информационная (ok=True)."""
+    cfg, status = _runtime_status()
+    if not status or cfg is None:
+        return DoctorCheck("Устройства", True, "пропуск (стек остановлен)")
+    try:
+        from .mqtt_test import collect_availability
+        av = collect_availability(cfg)
+        if not av.ok:
+            return DoctorCheck("Устройства", True, f"нет данных ({av.message})")
+        if not av.states:
+            return DoctorCheck("Устройства", True,
+                               "availability пуст — включён ли availability в zigbee2mqtt.yaml?")
+        offline = sorted(n for n, s in av.states.items() if str(s).lower() != "online")
+        online_n = len(av.states) - len(offline)
+        msg = f"online {online_n} / offline {len(offline)}"
+        if offline:
+            msg += " — offline: " + ", ".join(offline)
+        return DoctorCheck("Устройства", True, msg)
+    except Exception as e:
+        return DoctorCheck("Устройства", True, f"пропуск (ошибка проверки: {e})")
+
+
 def run_doctor(verbose: bool = True) -> list:
     """Запуск всех проверок"""
     checks = [
@@ -234,6 +298,10 @@ def run_doctor(verbose: bool = True) -> list:
         check_usb_device(),
         check_udev_rules(),
         check_ports(),
+        # Рантайм (информационные; не входят в critical_checks):
+        check_containers_healthy(),
+        check_mqtt_reachable(),
+        check_devices_online(),
     ]
     
     if verbose:

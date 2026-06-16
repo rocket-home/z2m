@@ -15,7 +15,11 @@ from .coordinator_detector import (
     probe_coordinator,
     install_universal_silabs_flasher,
 )
-from .mqtt_test import set_z2m_permit_join as set_z2m_permit_join_runtime
+from .mqtt_test import (
+    set_z2m_permit_join as set_z2m_permit_join_runtime,
+    test_mqtt_connection,
+    collect_availability,
+)
 
 
 class Z2MCLI:
@@ -40,6 +44,8 @@ class Z2MCLI:
   status, s          - Показать статус контейнеров
   ps, containers     - Показать статус контейнеров (алиас)
   config, c          - Показать текущую конфигурацию
+  health             - Здоровье стека (контейнеры, MQTT, офлайн-устройства)
+  mqtt-test          - Проверить подключение к локальному MQTT
   devices, d         - Показать доступные USB устройства
   coordinator        - Определить тип координатора (ember/zstack) по USB
   coordinator --probe [dev] - Активный probe порта (zstack точно; silabs через tool)
@@ -176,6 +182,51 @@ class Z2MCLI:
         summary = self.config.get_status_summary()
         for key, value in summary.items():
             print(f"  {key}: {value}")
+
+    def cmd_health(self):
+        """Здоровье стека: контейнеры, MQTT и офлайн-устройства (по availability)."""
+        print("\n🩺 Здоровье z2m:")
+        print("-" * 50)
+
+        # 1) Контейнеры (Health берётся из docker compose ps, если заданы healthcheck'и)
+        status = self.docker_manager.get_container_status()
+        if not status:
+            print("  ❌ контейнеры: не запущены")
+        else:
+            for service, info in status.items():
+                state = str(info.get('overall', 'unknown'))
+                healthy = ('running' in state.lower()) and ('unhealthy' not in state.lower())
+                print(f"  {'✅' if healthy else '⚠️'} {service}: {state}")
+
+        # 2) Локальный MQTT
+        res = test_mqtt_connection(
+            host="127.0.0.1",
+            username=self.config.mqtt_user,
+            password=self.config.mqtt_password,
+        )
+        print(f"  {'✅' if res.ok else '❌'} MQTT {res.host}:{res.port}: {res.message}")
+
+        # 3) Доступность устройств (нужен включённый availability в zigbee2mqtt.yaml)
+        av = collect_availability(self.config)
+        if not av.ok:
+            print(f"  ⚠️ availability: {av.message}")
+        elif not av.states:
+            print("  ⚠️ availability: топиков нет — включите `availability` в zigbee2mqtt.yaml и перезапустите")
+        else:
+            offline = sorted(n for n, s in av.states.items() if str(s).lower() != 'online')
+            online_n = len(av.states) - len(offline)
+            print(f"  📡 устройств: {len(av.states)} (online {online_n}, offline {len(offline)})")
+            for n in offline:
+                print(f"     🔴 offline: {n}")
+
+    def cmd_mqtt_test(self):
+        """Проверить подключение к локальному MQTT-брокеру."""
+        res = test_mqtt_connection(
+            host="127.0.0.1",
+            username=self.config.mqtt_user,
+            password=self.config.mqtt_password,
+        )
+        print(f"{'✅' if res.ok else '❌'} MQTT {res.host}:{res.port}: {res.message}")
 
     def cmd_devices(self):
         """Показать доступные устройства"""
@@ -524,6 +575,10 @@ class Z2MCLI:
                     self.cmd_status()
                 elif command in ['config', 'c']:
                     self.cmd_config()
+                elif command == 'health':
+                    self.cmd_health()
+                elif command in ('mqtt-test', 'mqtt_test', 'mqtttest'):
+                    self.cmd_mqtt_test()
                 elif command in ['devices', 'd']:
                     self.cmd_devices()
                 elif command in ['coordinator', 'coord']:
@@ -620,6 +675,8 @@ def print_usage():
   logs -f [сервис]    Следить за логами (Ctrl+C чтобы выйти)
   
   config              Показать конфигурацию
+  health              Здоровье стека (контейнеры, MQTT, офлайн-устройства)
+  mqtt-test           Проверить подключение к локальному MQTT
   devices             Показать USB устройства
   doctor              Диагностика системы
   coordinator         Определить координатор (ember/zstack) по USB
@@ -669,6 +726,10 @@ def run_quick_command(command: str, args: list) -> int:
             cli.cmd_logs(service)
     elif command in ('config', 'c'):
         cli.cmd_config()
+    elif command in ('health',):
+        cli.cmd_health()
+    elif command in ('mqtt-test', 'mqtt_test', 'mqtttest'):
+        cli.cmd_mqtt_test()
     elif command in ('devices', 'd'):
         cli.cmd_devices()
     elif command in ('coordinator', 'coord'):
@@ -693,6 +754,8 @@ QUICK_COMMANDS = {
     'status', 's', 'ps', 'containers',
     'logs', 'log',
     'config', 'c',
+    'health',
+    'mqtt-test', 'mqtt_test', 'mqtttest',
     'devices', 'd',
     'doctor',
     'coordinator', 'coord',
