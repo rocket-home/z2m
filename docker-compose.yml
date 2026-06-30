@@ -25,9 +25,10 @@ services:
       - "${CLOUD_MQTT_HOST:-cloud.invalid}:${CLOUD_MQTT_IP:-127.0.0.1}"
     restart: unless-stopped
     logging: *default-logging
-    # $$SYS/broker/version is retained -> returns immediately (anonymous allowed).
+    # $$SYS/broker/version is retained -> returns immediately. Broker requires auth
+    # (allow_anonymous false), so the probe authenticates with the container's MQTT creds.
     healthcheck:
-      test: ["CMD", "mosquitto_sub", "-h", "localhost", "-t", "$$SYS/broker/version", "-C", "1", "-W", "3"]
+      test: ["CMD-SHELL", "mosquitto_sub -h localhost -u \"$$MQTT_USER\" -P \"$$MQTT_PASSWORD\" -t '$$SYS/broker/version' -C 1 -W 3"]
       interval: 30s
       timeout: 5s
       retries: 3
