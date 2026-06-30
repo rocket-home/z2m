@@ -6,6 +6,10 @@ import re
 from pathlib import Path
 from typing import List, Dict, Optional
 
+from .log import get_logger
+
+logger = get_logger(__name__)
+
 
 class DeviceDetector:
     """Класс для обнаружения USB Zigbee адаптеров"""
@@ -56,6 +60,7 @@ class DeviceDetector:
             try:
                 real_path = str(zigbee_link.resolve())
             except Exception:
+                logger.warning("не удалось разрешить symlink /dev/zigbee", exc_info=True)
                 real_path = str(zigbee_link)
 
             existing = next((d for d in devices if d.get("path") == real_path), None)

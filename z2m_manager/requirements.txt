@@ -4,3 +4,6 @@ paho-mqtt>=1.6.1
 pyserial>=3.5
 Jinja2>=3.1.0
 
+# dev/test
+pytest>=7.0
+

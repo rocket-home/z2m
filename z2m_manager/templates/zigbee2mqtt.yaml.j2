@@ -34,6 +34,17 @@ advanced:
   log_level: warn
   log_namespaced_levels:
     z2m:mqtt: warning
+  # ISO timestamp of the last Zigbee message per device (offline diagnostics).
+  last_seen: ISO_8601
+
+# Track reachability -> publish zigbee2mqtt/<device>/availability (online/offline).
+# active = mains-powered (actively pinged), passive = battery (long timeout, minutes).
+# Tune timeouts if you see false "offline" for rarely-reporting devices.
+availability:
+  active:
+    timeout: 10
+  passive:
+    timeout: 1500
 
 {% if DEVICES_YAML %}
 devices:
