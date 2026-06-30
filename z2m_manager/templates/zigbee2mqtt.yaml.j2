@@ -9,7 +9,7 @@
 # - edit `.env` (and/or the template), then re-generate the config
 # - for manual reference see `zigbee2mqtt.yaml.example`
 homeassistant: false
-permit_join: true
+permit_join: {{ PERMIT_JOIN | default("false") }}
 
 mqtt:
   base_topic: {{ MQTT_BASE_TOPIC | default("zigbee2mqtt") }}

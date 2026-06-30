@@ -233,9 +233,9 @@ def _runtime_status():
         return None, {}
 
 
-def check_containers_healthy() -> DoctorCheck:
+def check_containers_healthy(runtime=None) -> DoctorCheck:
     """Состояние контейнеров (Health из healthcheck'ов, если заданы). Информационная."""
-    _, status = _runtime_status()
+    _, status = runtime if runtime is not None else _runtime_status()
     if not status:
         return DoctorCheck("Контейнеры", True, "не запущены (стек остановлен)")
     bad = []
@@ -249,9 +249,9 @@ def check_containers_healthy() -> DoctorCheck:
     return DoctorCheck("Контейнеры", True, f"все running ({len(status)})")
 
 
-def check_mqtt_reachable() -> DoctorCheck:
+def check_mqtt_reachable(runtime=None) -> DoctorCheck:
     """Доступность локального MQTT. Пропуск, если стек не запущен."""
-    cfg, status = _runtime_status()
+    cfg, status = runtime if runtime is not None else _runtime_status()
     if not status or cfg is None:
         return DoctorCheck("MQTT", True, "пропуск (стек остановлен)")
     try:
@@ -263,9 +263,9 @@ def check_mqtt_reachable() -> DoctorCheck:
         return DoctorCheck("MQTT", True, f"пропуск (ошибка проверки: {e})")
 
 
-def check_devices_online() -> DoctorCheck:
+def check_devices_online(runtime=None) -> DoctorCheck:
     """Офлайн-устройства по availability. Всегда информационная (ok=True)."""
-    cfg, status = _runtime_status()
+    cfg, status = runtime if runtime is not None else _runtime_status()
     if not status or cfg is None:
         return DoctorCheck("Устройства", True, "пропуск (стек остановлен)")
     try:
@@ -298,10 +298,16 @@ def run_doctor(verbose: bool = True) -> list:
         check_usb_device(),
         check_udev_rules(),
         check_ports(),
-        # Рантайм (информационные; не входят в critical_checks):
-        check_containers_healthy(),
-        check_mqtt_reachable(),
-        check_devices_online(),
+    ]
+
+    # Рантайм-проверки (информационные; не входят в critical_checks): берём статус
+    # контейнеров и config один раз и переиспользуем — иначе 3× `docker compose ps`
+    # (по 30с таймауту) и 3× пересборка Z2MConfig на каждом `./z2m doctor`.
+    runtime = _runtime_status()
+    checks += [
+        check_containers_healthy(runtime),
+        check_mqtt_reachable(runtime),
+        check_devices_online(runtime),
     ]
     
     if verbose:
