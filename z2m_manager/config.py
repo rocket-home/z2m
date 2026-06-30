@@ -100,7 +100,12 @@ class Z2MConfig:
                     with open(self.zigbee2mqtt_devices_yaml, "r", encoding="utf-8") as df:
                         d = yaml.safe_load(df) or {}
                     if isinstance(d, dict):
-                        devices = d
+                        # Не использовать в этом файле верхний ключ `devices:` — шаблон сам его добавляет;
+                        # иначе получится недопустимый для Z2M вложенный `devices: { devices: ... }`.
+                        if len(d) == 1 and "devices" in d and isinstance(d.get("devices"), dict):
+                            devices = d["devices"]
+                        else:
+                            devices = d
             except Exception:
                 devices = {}
             # 2) fallback: вытаскиваем из текущего zigbee2mqtt.yaml (если отдельного файла нет/пусто)
@@ -560,6 +565,31 @@ class Z2MConfig:
             return None
         except Exception:
             return None
+
+    def get_z2m_frontend_port(self) -> int:
+        """Читает frontend.port из zigbee2mqtt.yaml (fallback на DEFAULT_FRONTEND_PORT)."""
+        default = int(self.DEFAULT_FRONTEND_PORT)
+        if yaml is None:
+            return default
+        try:
+            if not self.zigbee2mqtt_yaml.exists():
+                return default
+            with open(self.zigbee2mqtt_yaml, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+            if not isinstance(data, dict):
+                return default
+            frontend = data.get("frontend")
+            if not isinstance(frontend, dict):
+                return default
+            port = frontend.get("port")
+            if isinstance(port, int) and 1 <= port <= 65535:
+                return port
+            if isinstance(port, str) and port.strip().isdigit():
+                p = int(port.strip())
+                return p if 1 <= p <= 65535 else default
+            return default
+        except Exception:
+            return default
 
     def set_z2m_permit_join(self, enabled: bool) -> bool:
         """Обновляет permit_join в zigbee2mqtt.yaml. Возвращает True/False по результату записи."""
