@@ -7,6 +7,7 @@ import shutil
 import shlex
 import getpass
 import grp
+import socket
 from pathlib import Path
 from typing import Optional, List, Callable
 from textual.app import App, ComposeResult
@@ -1578,9 +1579,32 @@ class Z2MApp(App):
         try:
             self.config = Z2MConfig()
             self.docker_manager = DockerManager(self.config)
+            self._lan_host: Optional[str] = None
         except Exception as e:
             print(f"❌ Ошибка инициализации: {e}")
             raise
+    
+    def _get_lan_host(self) -> str:
+        """Пытается определить IP в локальной сети для ссылок (чтобы открывалось с других устройств)."""
+        if self._lan_host:
+            return self._lan_host
+        # Трюк с UDP connect: не отправляет пакеты, но позволяет узнать исходящий интерфейс/IP.
+        for target in (("1.1.1.1", 80), ("8.8.8.8", 80), ("10.255.255.255", 1)):
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                try:
+                    s.connect(target)
+                    ip = s.getsockname()[0]
+                finally:
+                    s.close()
+                if ip and ip != "127.0.0.1":
+                    self._lan_host = ip
+                    return ip
+            except Exception:
+                continue
+        # fallback: mDNS-имя хоста в локальной сети (удобнее, чем 127.0.0.1)
+        self._lan_host = "rocket-home.local"
+        return self._lan_host
 
     def compose(self) -> ComposeResult:
         with Container():
@@ -1622,13 +1646,20 @@ class Z2MApp(App):
         cloud = "✅ Вкл" if config.cloud_mqtt_enabled else "❌ Выкл"
         cloud_host = config.cloud_mqtt_host if config.cloud_mqtt_enabled else ""
         nodered = "✅ Вкл" if config.nodered_enabled else "❌ Выкл"
+        z2m_port = getattr(config, "get_z2m_frontend_port", lambda: 4000)()
+        host = self._get_lan_host()
+        z2m_url = f"http://{host}:{z2m_port}"
+        nodered_url = f"http://{host}:1880"
 
         lines = [
             f"[b]Статус:[/b] {status_icon}",
             f"[b]Устройство:[/b] {device_str}",
             f"[b]Cloud MQTT:[/b] {cloud} {cloud_host}",
             f"[b]NodeRED:[/b] {nodered}",
+            f"[b]Z2M UI:[/b] {z2m_url}",
         ]
+        if config.nodered_enabled:
+            lines.append(f"[b]NodeRED UI:[/b] {nodered_url}")
 
         panel.update("\n".join(lines))
 
