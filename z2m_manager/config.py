@@ -127,6 +127,15 @@ class Z2MConfig:
                     devices_yaml = ""
 
         ctx["DEVICES_YAML"] = devices_yaml
+
+        # PERMIT_JOIN: при регенерации (--force) сохраняем текущее runtime-значение из
+        # zigbee2mqtt.yaml вместо безусловного true в шаблоне (иначе gen-configs молча
+        # снова открывал бы сеть). Дефолт — false: не открывать join без явного запроса.
+        try:
+            cur_pj = self.get_z2m_permit_join()
+        except Exception:
+            cur_pj = None
+        ctx["PERMIT_JOIN"] = "true" if cur_pj else "false"
         return ctx
 
     def extract_devices_to_file(self, *, backup: bool = True) -> Dict[str, Any]:
@@ -327,25 +336,28 @@ class Z2MConfig:
         with open(self.bridge_conf, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        # ВАЖНО: CLOUD_MQTT_ENABLED — источник правды в .env.
-        # bridge.conf может быть не синхронизирован (например, из-за прав на файл),
-        # поэтому здесь НЕ переопределяем флаг включения.
+        # ВАЖНО: .env — источник правды. bridge.conf может быть не синхронизирован
+        # (например, save_config не смог его переписать из-за прав — см. bridge_conf_last_error),
+        # поэтому из bridge.conf берём значение ТОЛЬКО если в .env его нет: иначе стейл-креды
+        # из bridge.conf затирали бы корректные из .env, и бридж аутентифицировался бы старым паролем.
+        env_keys = self._read_env_file_all()
         lines = content.strip().split('\n')
 
         # Парсим значения (даже если закомментированы)
         for line in lines:
             line = line.lstrip('#').strip()
             if line.startswith('address '):
-                self._config["CLOUD_MQTT_HOST"] = line.split(' ', 1)[1].strip()
+                if not env_keys.get("CLOUD_MQTT_HOST"):
+                    self._config["CLOUD_MQTT_HOST"] = line.split(' ', 1)[1].strip()
             elif line.startswith('remote_username '):
                 value = line.split(' ', 1)[1].strip()
-                # Не загружаем placeholder значения
-                if not value.startswith('XXXX'):
+                # Не загружаем placeholder значения и не перетираем .env
+                if not value.startswith('XXXX') and not env_keys.get("CLOUD_MQTT_USER"):
                     self._config["CLOUD_MQTT_USER"] = value
             elif line.startswith('remote_password '):
                 value = line.split(' ', 1)[1].strip()
-                # Не загружаем placeholder значения
-                if not value.startswith('XXXX'):
+                # Не загружаем placeholder значения и не перетираем .env
+                if not value.startswith('XXXX') and not env_keys.get("CLOUD_MQTT_PASSWORD"):
                     self._config["CLOUD_MQTT_PASSWORD"] = value
 
     def save_config(self) -> None:
