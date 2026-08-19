@@ -8,11 +8,14 @@
 #
 # To change settings:
 # - edit `.env` (CLOUD_MQTT_*), then re-generate the config
+# - CLOUD_MQTT_PORT/CLOUD_MQTT_TLS: cloud accepts the bridge over TLS on 8883. Plain 1883
+#   makes the cloud mark the hub as insecure and refuse local execution of automations.
 # - for manual reference see `mosquitto/conf.d/bridge.conf.example`
 {% set c = "" if CLOUD_MQTT_ENABLED else "#" %}
 {{ c }}connection rocket
-{{ c }}address {{ CLOUD_MQTT_HOST | default("mq.rocket-home.ru") }}
-{{ c }}bridge_protocol_version {{ CLOUD_MQTT_PROTOCOL | default("mqttv311") }}
+{{ c }}address {{ CLOUD_MQTT_HOST | default("mq.rocket-home.ru") }}:{{ CLOUD_MQTT_PORT | default(8883) }}
+{% if CLOUD_MQTT_TLS | default(true) %}{{ c }}bridge_capath /etc/ssl/certs
+{% endif %}{{ c }}bridge_protocol_version {{ CLOUD_MQTT_PROTOCOL | default("mqttv311") }}
 {{ c }}try_private false
 {{ c }}topic # both 2
 {{ c }}remote_username {{ CLOUD_MQTT_USER or "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" }}

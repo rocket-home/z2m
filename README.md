@@ -107,9 +107,15 @@ ZIGBEE_DEVICE=/dev/ttyACM0
 NODERED_ENABLED=false
 CLOUD_MQTT_ENABLED=false
 CLOUD_MQTT_HOST=mq.rocket-home.ru
+CLOUD_MQTT_PORT=8883
+CLOUD_MQTT_TLS=true
 CLOUD_MQTT_USER=UUID
 CLOUD_MQTT_PASSWORD=password
 ```
+
+`CLOUD_MQTT_PORT`/`CLOUD_MQTT_TLS` задают, как мост идёт в облако. По умолчанию — TLS на 8883.
+Открытый 1883 (`CLOUD_MQTT_TLS=false`) оставлен как аварийный вариант: по нему облако помечает
+хаб незащищённым и **запрещает перенос автоматизаций на локальное исполнение**.
 
 ### Zigbee USB адаптер
 

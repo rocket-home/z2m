@@ -1,5 +1,8 @@
 #connection rocket
-#address mq.rocket-home.ru
+# Порт 8883 + bridge_capath — обязательны: по открытому 1883 облако помечает хаб
+# незащищённым и запрещает локальное исполнение автоматизаций.
+#address mq.rocket-home.ru:8883
+#bridge_capath /etc/ssl/certs
 #bridge_protocol_version mqttv311
 #try_private false
 #topic # both 2

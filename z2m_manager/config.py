@@ -25,6 +25,12 @@ class Z2MConfig:
 
     DEFAULT_CLOUD_HOST = "mq.rocket-home.ru"
     DEFAULT_CLOUD_PROTOCOL = "mqttv311"  # mqttv31 | mqttv311 | mqttv50
+    # Облако принимает мост по TLS на 8883. Открытый 1883 оставлен только как аварийный
+    # вариант: по нему облако помечает хаб как незащищённый (bridge_tls=false) и запрещает
+    # перенос автоматизаций на локальное исполнение.
+    DEFAULT_CLOUD_PORT = 8883
+    DEFAULT_CLOUD_TLS = True
+    DEFAULT_CLOUD_CAPATH = "/etc/ssl/certs"
     DEFAULT_FRONTEND_HOST = "0.0.0.0"
     DEFAULT_FRONTEND_PORT = 4000
 
@@ -301,6 +307,8 @@ class Z2MConfig:
             "CLOUD_MQTT_PASSWORD": "",
             "CLOUD_MQTT_ENABLED": False,
             "CLOUD_MQTT_PROTOCOL": self.DEFAULT_CLOUD_PROTOCOL,
+            "CLOUD_MQTT_PORT": self.DEFAULT_CLOUD_PORT,
+            "CLOUD_MQTT_TLS": self.DEFAULT_CLOUD_TLS,
         }
 
         if self.env_file.exists():
@@ -322,6 +330,16 @@ class Z2MConfig:
                                 # допускаем mqttv31/mqttv311/mqttv50
                                 if v in ("mqttv31", "mqttv311", "mqttv50"):
                                     self._config[key] = v
+                            elif key == "CLOUD_MQTT_TLS":
+                                self._config[key] = value.lower() in ('true', '1', 'yes')
+                            elif key == "CLOUD_MQTT_PORT":
+                                # Мусор в порту молча не проглатываем — остаётся дефолт,
+                                # иначе мост ушёл бы в никуда без единого сообщения.
+                                try:
+                                    port = int(value.strip())
+                                except ValueError:
+                                    port = self.DEFAULT_CLOUD_PORT
+                                self._config[key] = port if 1 <= port <= 65535 else self.DEFAULT_CLOUD_PORT
                             else:
                                 self._config[key] = value
 
@@ -347,8 +365,21 @@ class Z2MConfig:
         for line in lines:
             line = line.lstrip('#').strip()
             if line.startswith('address '):
+                # mosquitto пишет адрес как `host[:port]`. Порт разбираем отдельно, иначе он
+                # попал бы в CLOUD_MQTT_HOST и следующая генерация дала бы `host:8883:8883`.
+                addr = line.split(' ', 1)[1].strip()
+                host, sep, port_part = addr.rpartition(':')
+                if sep and port_part.isdigit():
+                    if not env_keys.get("CLOUD_MQTT_PORT"):
+                        self._config["CLOUD_MQTT_PORT"] = int(port_part)
+                else:
+                    host = addr
                 if not env_keys.get("CLOUD_MQTT_HOST"):
-                    self._config["CLOUD_MQTT_HOST"] = line.split(' ', 1)[1].strip()
+                    self._config["CLOUD_MQTT_HOST"] = host
+            elif line.startswith('bridge_capath ') or line.startswith('bridge_cafile '):
+                # Наличие якоря доверия — единственный признак TLS в готовом bridge.conf.
+                if not env_keys.get("CLOUD_MQTT_TLS"):
+                    self._config["CLOUD_MQTT_TLS"] = True
             elif line.startswith('remote_username '):
                 value = line.split(' ', 1)[1].strip()
                 # Не загружаем placeholder значения и не перетираем .env
@@ -389,6 +420,8 @@ class Z2MConfig:
             "CLOUD_MQTT_PASSWORD": str(self._config["CLOUD_MQTT_PASSWORD"]),
             "CLOUD_MQTT_ENABLED": "true" if self._config["CLOUD_MQTT_ENABLED"] else "false",
             "CLOUD_MQTT_PROTOCOL": str(self._config.get("CLOUD_MQTT_PROTOCOL", self.DEFAULT_CLOUD_PROTOCOL)),
+            "CLOUD_MQTT_PORT": str(self._config.get("CLOUD_MQTT_PORT", self.DEFAULT_CLOUD_PORT)),
+            "CLOUD_MQTT_TLS": "true" if self._config.get("CLOUD_MQTT_TLS", self.DEFAULT_CLOUD_TLS) else "false",
         }
         ordered_keys = [
             "MQTT_USER",
@@ -401,6 +434,8 @@ class Z2MConfig:
             "CLOUD_MQTT_PASSWORD",
             "CLOUD_MQTT_ENABLED",
             "CLOUD_MQTT_PROTOCOL",
+            "CLOUD_MQTT_PORT",
+            "CLOUD_MQTT_TLS",
         ]
 
         merged_lines = self._merge_env_file(existing_path=self.env_file, updates=updates, ordered_keys=ordered_keys)
@@ -437,9 +472,13 @@ class Z2MConfig:
             if proto not in ("mqttv31", "mqttv311", "mqttv50"):
                 proto = self.DEFAULT_CLOUD_PROTOCOL
 
+            port = self._config.get("CLOUD_MQTT_PORT") or self.DEFAULT_CLOUD_PORT
+            tls = self._config.get("CLOUD_MQTT_TLS", self.DEFAULT_CLOUD_TLS)
+            capath_line = f"{comment_prefix}bridge_capath {self.DEFAULT_CLOUD_CAPATH}\n" if tls else ""
+
             content = f"""{comment_prefix}connection rocket
-{comment_prefix}address {self._config['CLOUD_MQTT_HOST']}
-{comment_prefix}bridge_protocol_version {proto}
+{comment_prefix}address {self._config['CLOUD_MQTT_HOST']}:{port}
+{capath_line}{comment_prefix}bridge_protocol_version {proto}
 {comment_prefix}try_private false
 {comment_prefix}topic # both 2
 {comment_prefix}remote_username {user}

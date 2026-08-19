@@ -5,7 +5,9 @@
 - round-trip yaml сохраняет top-level ключи (`availability`, `advanced.last_seen`) и `devices`
   — это инвариант, на котором держится включение availability через шаблон/правку конфига;
 - шаблон рендерит `availability` + `advanced.last_seen`;
-- `_merge_env_file` сохраняет неизвестные ключи и комментарии .env.
+- `_merge_env_file` сохраняет неизвестные ключи и комментарии .env;
+- мост генерится по TLS на 8883 и переживает round-trip: порт из `address host:port` не
+  прилипает к CLOUD_MQTT_HOST (иначе следующая генерация дала бы `host:8883:8883`).
 """
 import shutil
 from pathlib import Path
@@ -87,3 +89,49 @@ def test_get_base_topic_and_permit_join(base):
     cfg = Z2MConfig(base_dir=base)
     assert cfg.get_z2m_base_topic() == "zigbee2mqtt"
     assert cfg.get_z2m_permit_join() is True
+
+
+def test_bridge_conf_defaults_to_tls_8883(base):
+    cfg = Z2MConfig(base_dir=base)
+    cfg._config["CLOUD_MQTT_ENABLED"] = True
+    cfg._config["CLOUD_MQTT_USER"] = "a028e638-a604-4bca-b6d0-3b3a2e25e90d"
+    cfg._config["CLOUD_MQTT_PASSWORD"] = "secret"
+    assert cfg._save_bridge_config()
+
+    text = (base / "mosquitto" / "conf.d" / "bridge.conf").read_text(encoding="utf-8")
+    assert "address mq.rocket-home.ru:8883" in text
+    assert "bridge_capath /etc/ssl/certs" in text
+
+
+def test_bridge_conf_plain_port_when_tls_disabled(base):
+    cfg = Z2MConfig(base_dir=base)
+    cfg._config["CLOUD_MQTT_ENABLED"] = True
+    cfg._config["CLOUD_MQTT_TLS"] = False
+    cfg._config["CLOUD_MQTT_PORT"] = 1883
+    assert cfg._save_bridge_config()
+
+    text = (base / "mosquitto" / "conf.d" / "bridge.conf").read_text(encoding="utf-8")
+    assert "address mq.rocket-home.ru:1883" in text
+    assert "bridge_capath" not in text
+
+
+def test_port_is_not_glued_to_host_on_reload(base):
+    """Порт из готового bridge.conf уходит в CLOUD_MQTT_PORT, а не в хост."""
+    (base / "mosquitto" / "conf.d" / "bridge.conf").write_text(
+        "connection rocket\n"
+        "address mq.rocket-home.ru:8883\n"
+        "bridge_capath /etc/ssl/certs\n"
+        "remote_username uuid-1\n"
+        "remote_password pw\n",
+        encoding="utf-8",
+    )
+    cfg = Z2MConfig(base_dir=base)
+    assert cfg._config["CLOUD_MQTT_HOST"] == "mq.rocket-home.ru"
+    assert cfg._config["CLOUD_MQTT_PORT"] == 8883
+    assert cfg._config["CLOUD_MQTT_TLS"] is True
+
+    cfg._config["CLOUD_MQTT_ENABLED"] = True
+    assert cfg._save_bridge_config()
+    text = (base / "mosquitto" / "conf.d" / "bridge.conf").read_text(encoding="utf-8")
+    assert "address mq.rocket-home.ru:8883" in text
+    assert ":8883:8883" not in text
